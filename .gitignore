@@ -1,0 +1,46 @@
+# Build results
+[Bb]in/
+[Oo]bj/
+[Pp]ublish/
+
+# .NET
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+
+# User-specific files
+*.rsuser
+*.userprefs
+
+# SQLite database
+*.db
+*.db-shm
+*.db-wal
+
+# Rider
+.idea/
+
+# VS Code
+.vscode/
+
+# Visual Studio
+.vs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/
+
+# Home Assistant configs (contains personal entity IDs)
+home-assistant/
+
+# Deployment artifacts
+*.tar.gz
+nhl-monitor-deploy.tar.gz
+
+# Audio files (user-specific)
+*.mp3
+*.webm

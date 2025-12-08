@@ -1,0 +1,497 @@
+@page "/game/{GameId:int}"
+@using PuckDrop.Models.Api
+@using PuckDrop.Models.Domain
+@using PuckDrop.Services
+@using PuckDrop.State
+@using PuckDrop.Components.Shared
+@inject INhlApiClient NhlApiClient
+@inject ITeamService TeamService
+@inject GameStateContainer GameState
+@inject NavigationManager Navigation
+@implements IDisposable
+@rendermode InteractiveServer
+
+<PageTitle>NHL Monitor - @(_landing != null ? $"{_landing.AwayTeam.Abbrev} vs {_landing.HomeTeam.Abbrev}" : "Game")</PageTitle>
+
+@if (_isLoading)
+{
+    <div class="loading">
+        <div class="spinner"></div>
+    </div>
+}
+else if (_landing == null)
+{
+    <div class="card">
+        <h2>Game Not Found</h2>
+        <p>Unable to load game data.</p>
+        <a href="/schedule" class="btn btn-primary">Back to Schedule</a>
+    </div>
+}
+else
+{
+    <!-- Goal Celebration Overlay -->
+    @if (_showGoalCelebration)
+    {
+        <div class="goal-celebration" @onclick="() => _showGoalCelebration = false">
+            <div class="goal-text">GOAL!</div>
+            <div class="goal-confetti"></div>
+        </div>
+    }
+
+    <!-- Enhanced Scoreboard -->
+    <Scoreboard
+        AwayTeam="_landing.AwayTeam"
+        HomeTeam="_landing.HomeTeam"
+        Clock="_landing.Clock"
+        PeriodDescriptor="_landing.PeriodDescriptor"
+        GameState="@_landing.GameState"
+        StartTime="_landing.StartTimeUtc"
+        AwaySituation="_landing.Situation?.AwayTeam"
+        HomeSituation="_landing.Situation?.HomeTeam"
+        GameOutcome="_landing.GameOutcome" />
+
+    <!-- Three Stars (for finished games) -->
+    @if ((_landing.GameState == "FINAL" || _landing.GameState == "OFF") && _landing.Summary?.ThreeStars != null)
+    {
+        <div class="mt-3">
+            <ThreeStars Stars="_landing.Summary.ThreeStars" />
+        </div>
+    }
+
+    <!-- Tab Navigation -->
+    <div class="game-tabs">
+        <button class="tab-btn @(_activeTab == "summary" ? "active" : "")" @onclick='() => _activeTab = "summary"'>
+            Summary
+        </button>
+        <button class="tab-btn @(_activeTab == "plays" ? "active" : "")" @onclick='() => _activeTab = "plays"'>
+            Play-by-Play
+        </button>
+        <button class="tab-btn @(_activeTab == "stats" ? "active" : "")" @onclick='() => _activeTab = "stats"'>
+            Player Stats
+        </button>
+        <button class="tab-btn @(_activeTab == "shots" ? "active" : "")" @onclick='() => _activeTab = "shots"'>
+            Shot Chart
+        </button>
+    </div>
+
+    <!-- Tab Content -->
+    <div class="game-content">
+        @if (_activeTab == "summary")
+        {
+            <div class="summary-grid">
+                <!-- Left: Scoring Summary -->
+                <div class="summary-left">
+                    <ScoringSummary
+                        Scoring="_landing.Summary?.Scoring"
+                        HomeTeamAbbrev="@_landing.HomeTeam.Abbrev"
+                        AwayTeamAbbrev="@_landing.AwayTeam.Abbrev"
+                        FavoriteTeamAbbrev="@_favoriteTeam?.TeamAbbrev" />
+
+                    <div class="mt-3">
+                        <PenaltySummary
+                            Penalties="_landing.Summary?.Penalties"
+                            HomeTeamAbbrev="@_landing.HomeTeam.Abbrev"
+                            AwayTeamAbbrev="@_landing.AwayTeam.Abbrev" />
+                    </div>
+                </div>
+
+                <!-- Right: Team Stats -->
+                <div class="summary-right">
+                    <TeamStatsComparison
+                        AwayTeam="_boxscore?.AwayTeam"
+                        HomeTeam="_boxscore?.HomeTeam"
+                        PlayerStats="_boxscore?.PlayerByGameStats"
+                        TeamGameStats="_rightRail?.TeamGameStats" />
+
+                    <!-- Game Info -->
+                    @if (_landing.Summary?.GameInfo != null)
+                    {
+                        <div class="game-info-card mt-3">
+                            <div class="section-header">
+                                <h3>Game Info</h3>
+                            </div>
+                            <div class="info-grid">
+                                <div class="info-item">
+                                    <span class="info-label">Venue</span>
+                                    <span class="info-value">@_landing.Venue.Default</span>
+                                </div>
+                                @if (_landing.Summary.GameInfo.Referees?.Count > 0)
+                                {
+                                    <div class="info-item">
+                                        <span class="info-label">Referees</span>
+                                        <span class="info-value">@string.Join(", ", _landing.Summary.GameInfo.Referees.Select(r => r.Default))</span>
+                                    </div>
+                                }
+                                @if (_landing.Summary.GameInfo.Linesmen?.Count > 0)
+                                {
+                                    <div class="info-item">
+                                        <span class="info-label">Linesmen</span>
+                                        <span class="info-value">@string.Join(", ", _landing.Summary.GameInfo.Linesmen.Select(l => l.Default))</span>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+        else if (_activeTab == "plays")
+        {
+            <section class="card" aria-labelledby="play-by-play-heading">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h3 id="play-by-play-heading" class="card-title mb-0">Play-by-Play</h3>
+                    <div class="play-controls">
+                        <label class="auto-scroll-toggle">
+                            <input type="checkbox" @bind="_autoScroll" />
+                            Auto-scroll
+                        </label>
+                        <select class="form-control form-control-sm" style="width: auto;" @bind="_playFilter">
+                            <option value="all">All Events</option>
+                            <option value="goals">Goals</option>
+                            <option value="shots">Shots</option>
+                            <option value="penalties">Penalties</option>
+                            <option value="hits">Hits</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="play-feed" @ref="_playFeedRef" role="log" aria-live="polite">
+                    @if (_playByPlay?.Plays != null)
+                    {
+                        @foreach (var play in GetFilteredPlays())
+                        {
+                            var isHighlight = IsHighlightPlay(play);
+                            var isGoal = play.TypeDescKey == "goal";
+                            <div class="play-item @(isHighlight ? "highlight" : "") @(isGoal ? "goal-play" : "")">
+                                <span class="play-period">P@(play.PeriodDescriptor.Number)</span>
+                                <span class="play-time">@play.TimeInPeriod</span>
+                                <span class="play-icon @play.TypeDescKey">@GetPlayIcon(play.TypeDescKey)</span>
+                                <span class="play-description @(play.TypeDescKey == "goal" ? "play-goal" : "") @(play.TypeDescKey == "penalty" ? "play-penalty" : "")">
+                                    @GetPlayDescription(play)
+                                </span>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <p class="text-muted text-center">No plays yet.</p>
+                    }
+                </div>
+            </section>
+        }
+        else if (_activeTab == "stats")
+        {
+            @if (_boxscore?.PlayerByGameStats != null)
+            {
+                <div class="player-stats-tabs">
+                    <button class="tab-btn-sm @(_statsTeam == "away" ? "active" : "")" @onclick='() => _statsTeam = "away"'>
+                        @_landing.AwayTeam.Abbrev
+                    </button>
+                    <button class="tab-btn-sm @(_statsTeam == "home" ? "active" : "")" @onclick='() => _statsTeam = "home"'>
+                        @_landing.HomeTeam.Abbrev
+                    </button>
+                </div>
+
+                <div class="card mt-2">
+                    <div class="card-header">
+                        <h3 class="card-title">@GetCurrentTeamAbbrev() Skaters</h3>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table player-stats-table">
+                            <thead>
+                                <tr>
+                                    <th class="player-col">Player</th>
+                                    <th>G</th>
+                                    <th>A</th>
+                                    <th>PTS</th>
+                                    <th>+/-</th>
+                                    <th>PIM</th>
+                                    <th>SOG</th>
+                                    <th>HIT</th>
+                                    <th>BLK</th>
+                                    <th>FO%</th>
+                                    <th>TOI</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var player in GetCurrentTeamStats().Forwards.Concat(GetCurrentTeamStats().Defense).OrderByDescending(p => p.Points).ThenByDescending(p => p.Goals).ThenBy(p => p.Toi))
+                                {
+                                    <tr class="@(player.Goals > 0 ? "has-goal" : "") @(player.Points > 0 ? "has-points" : "") clickable-row" @onclick="() => NavigateToPlayer(player.PlayerId)">
+                                        <td class="player-col">
+                                            <span class="jersey-number">#@player.SweaterNumber</span>
+                                            <span class="player-name">@player.Name.Default</span>
+                                            <span class="position">@player.Position</span>
+                                        </td>
+                                        <td class="@(player.Goals > 0 ? "stat-highlight" : "")">@player.Goals</td>
+                                        <td class="@(player.Assists > 0 ? "stat-highlight" : "")">@player.Assists</td>
+                                        <td class="@(player.Points > 0 ? "stat-highlight" : "")">@player.Points</td>
+                                        <td class="@GetPlusMinusClass(player.PlusMinus)">@FormatPlusMinus(player.PlusMinus)</td>
+                                        <td class="@(player.Pim > 0 ? "stat-negative" : "")">@player.Pim</td>
+                                        <td>@player.Shots</td>
+                                        <td>@player.Hits</td>
+                                        <td>@player.BlockedShots</td>
+                                        <td>@FormatFaceoffPct(player.FaceoffWinningPctg)</td>
+                                        <td class="toi-col">@player.Toi</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                @if (GetCurrentTeamStats().Goalies.Count > 0)
+                {
+                    <div class="card mt-3">
+                        <div class="card-header">
+                            <h3 class="card-title">@GetCurrentTeamAbbrev() Goalies</h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table player-stats-table goalie-table">
+                                <thead>
+                                    <tr>
+                                        <th class="player-col">Player</th>
+                                        <th>DEC</th>
+                                        <th>SA</th>
+                                        <th>GA</th>
+                                        <th>SV</th>
+                                        <th>SV%</th>
+                                        <th>TOI</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var goalie in GetCurrentTeamStats().Goalies)
+                                    {
+                                        <tr class="clickable-row" @onclick="() => NavigateToPlayer(goalie.PlayerId)">
+                                            <td class="player-col">
+                                                <span class="jersey-number">#@goalie.SweaterNumber</span>
+                                                <span class="player-name">@goalie.Name.Default</span>
+                                                @if (goalie.Starter == true)
+                                                {
+                                                    <span class="starter-badge">START</span>
+                                                }
+                                            </td>
+                                            <td class="@GetDecisionClass(goalie.Decision)">@(goalie.Decision ?? "-")</td>
+                                            <td>@goalie.SaveShotsAgainst</td>
+                                            <td>@goalie.GoalsAgainst</td>
+                                            <td>@GetSaves(goalie)</td>
+                                            <td class="@GetSavePctClass(goalie.SavePctg)">@FormatSavePct(goalie.SavePctg)</td>
+                                            <td class="toi-col">@goalie.Toi</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                }
+            }
+            else
+            {
+                <div class="card">
+                    <p class="text-muted text-center p-4">Player stats not available yet.</p>
+                </div>
+            }
+        }
+        else if (_activeTab == "shots")
+        {
+            <ShotChart
+                Plays="_playByPlay?.Plays"
+                RosterSpots="_playByPlay?.RosterSpots"
+                HomeTeamAbbrev="@_landing.HomeTeam.Abbrev"
+                AwayTeamAbbrev="@_landing.AwayTeam.Abbrev"
+                HomeTeamId="@_landing.HomeTeam.Id"
+                AwayTeamId="@_landing.AwayTeam.Id" />
+        }
+    </div>
+
+    <!-- Connection Status -->
+    @if (_isLive)
+    {
+        <div class="connection-status live">
+            <span class="status-dot"></span>
+            <span>Live</span>
+            <span class="last-update">@_lastUpdate.ToLocalTime().ToString("h:mm:ss tt")</span>
+        </div>
+    }
+}
+
+@code {
+    [Parameter]
+    public int GameId { get; set; }
+
+    private bool _isLoading = true;
+    private bool _autoScroll = true;
+    private bool _isLive;
+    private bool _showGoalCelebration;
+    private int _lastGoalCount;
+    private DateTime _lastUpdate;
+    private string _activeTab = "summary";
+    private string _statsTeam = "away";
+    private string _playFilter = "all";
+    private GameLandingResponse? _landing;
+    private PlayByPlayResponse? _playByPlay;
+    private BoxscoreResponse? _boxscore;
+    private RightRailResponse? _rightRail;
+    private FavoriteTeam? _favoriteTeam;
+    private ElementReference _playFeedRef;
+
+    protected override async Task OnInitializedAsync()
+    {
+        GameState.OnStateChanged += OnGameStateChanged;
+        GameState.SetCurrentGame(GameId);
+        GameState.RegisterViewer();
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _isLoading = true;
+        try
+        {
+            _favoriteTeam = await TeamService.GetFavoriteTeamAsync();
+            var landingTask = NhlApiClient.GetGameLandingAsync(GameId);
+            var playByPlayTask = NhlApiClient.GetPlayByPlayAsync(GameId);
+            var boxscoreTask = NhlApiClient.GetBoxscoreAsync(GameId);
+            var rightRailTask = NhlApiClient.GetRightRailAsync(GameId);
+
+            await Task.WhenAll(landingTask, playByPlayTask, boxscoreTask, rightRailTask);
+
+            _landing = landingTask.Result;
+            _playByPlay = playByPlayTask.Result;
+            _boxscore = boxscoreTask.Result;
+            _rightRail = rightRailTask.Result;
+
+            _isLive = _landing?.GameState is "LIVE" or "CRIT";
+            _lastUpdate = DateTime.UtcNow;
+            _lastGoalCount = (_landing?.AwayTeam.Score ?? 0) + (_landing?.HomeTeam.Score ?? 0);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void OnGameStateChanged()
+    {
+        if (GameState.CurrentGameId == GameId)
+        {
+            var newLanding = GameState.Landing;
+            var newGoalCount = (newLanding?.AwayTeam.Score ?? 0) + (newLanding?.HomeTeam.Score ?? 0);
+
+            // Trigger goal celebration if score increased
+            if (newGoalCount > _lastGoalCount && _lastGoalCount > 0)
+            {
+                _showGoalCelebration = true;
+                _ = HideGoalCelebrationAsync();
+            }
+
+            _lastGoalCount = newGoalCount;
+            _landing = newLanding ?? _landing;
+            _playByPlay = GameState.PlayByPlay ?? _playByPlay;
+            _boxscore = GameState.Boxscore ?? _boxscore;
+            _lastUpdate = GameState.LastUpdated;
+            _isLive = GameState.IsLive;
+
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task HideGoalCelebrationAsync()
+    {
+        await Task.Delay(3000);
+        _showGoalCelebration = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private IEnumerable<Play> GetFilteredPlays()
+    {
+        if (_playByPlay?.Plays == null) return Enumerable.Empty<Play>();
+
+        var plays = _playByPlay.Plays.OrderByDescending(p => p.SortOrder);
+
+        return _playFilter switch
+        {
+            "goals" => plays.Where(p => p.TypeDescKey == "goal"),
+            "shots" => plays.Where(p => p.TypeDescKey is "shot-on-goal" or "goal" or "missed-shot" or "blocked-shot"),
+            "penalties" => plays.Where(p => p.TypeDescKey == "penalty"),
+            "hits" => plays.Where(p => p.TypeDescKey == "hit"),
+            _ => plays // Show all plays
+        };
+    }
+
+    private bool IsHighlightPlay(Play play)
+    {
+        if (_favoriteTeam == null || play.Details?.EventOwnerTeamId == null) return false;
+        var favoriteTeamId = _landing?.AwayTeam.Abbrev == _favoriteTeam.TeamAbbrev
+            ? _landing?.AwayTeam.Id : _landing?.HomeTeam.Id;
+        return play.Details.EventOwnerTeamId == favoriteTeamId;
+    }
+
+    private static string GetPlayIcon(string typeDescKey) => typeDescKey switch
+    {
+        "goal" => "G",
+        "shot-on-goal" => "S",
+        "missed-shot" => "M",
+        "blocked-shot" => "B",
+        "hit" => "H",
+        "penalty" => "P",
+        "faceoff" => "F",
+        "giveaway" => "-",
+        "takeaway" => "+",
+        "stoppage" => "X",
+        "period-start" => ">",
+        "period-end" => "<",
+        _ => "."
+    };
+
+    private string GetPlayDescription(Play play)
+    {
+        var roster = _playByPlay?.RosterSpots;
+        string GetPlayerName(int? playerId)
+        {
+            if (playerId == null || roster == null) return "Unknown";
+            var player = roster.FirstOrDefault(r => r.PlayerId == playerId);
+            return player != null ? $"{player.FirstName.Default} {player.LastName.Default}" : "Unknown";
+        }
+
+        return play.TypeDescKey switch
+        {
+            "goal" => $"GOAL! {GetPlayerName(play.Details?.ScoringPlayerId)} ({play.Details?.ScoringPlayerTotal})",
+            "shot-on-goal" => $"Shot by {GetPlayerName(play.Details?.ShootingPlayerId)}",
+            "missed-shot" => $"Missed shot by {GetPlayerName(play.Details?.ShootingPlayerId)}",
+            "blocked-shot" => $"Blocked by {GetPlayerName(play.Details?.BlockingPlayerId)}",
+            "hit" => $"{GetPlayerName(play.Details?.HittingPlayerId)} hit {GetPlayerName(play.Details?.HitteePlayerId)}",
+            "penalty" => $"{play.Details?.DescKey?.Replace("-", " ")} - {GetPlayerName(play.Details?.CommittedByPlayerId)}",
+            "faceoff" => $"Faceoff won by {GetPlayerName(play.Details?.WinningPlayerId)}",
+            "stoppage" => play.Details?.Reason ?? "Stoppage",
+            "period-start" => $"Period {play.PeriodDescriptor.Number} started",
+            "period-end" => $"End of period {play.PeriodDescriptor.Number}",
+            _ => play.TypeDescKey.Replace("-", " ")
+        };
+    }
+
+    private static string FormatPlusMinus(int pm) => pm > 0 ? $"+{pm}" : pm.ToString();
+    private static string GetPlusMinusClass(int pm) => pm switch { > 0 => "stat-positive", < 0 => "stat-negative", _ => "" };
+    private static string FormatFaceoffPct(double? pct) => pct.HasValue ? $"{pct.Value:P0}" : "-";
+    private static string FormatSavePct(double? pct) => pct.HasValue ? $".{(pct.Value * 1000):000}" : "-";
+    private static string GetSavePctClass(double? pct) => pct switch { >= 0.920 => "stat-highlight", < 0.880 => "stat-negative", _ => "" };
+    private static string GetDecisionClass(string? dec) => dec switch { "W" => "decision-win", "L" => "decision-loss", "O" => "decision-ot", _ => "" };
+    private static string GetSaves(GoalieStats g) => g.SaveShotsAgainst?.Split('-').FirstOrDefault() ?? "-";
+
+    private TeamPlayerStats GetCurrentTeamStats() => _statsTeam == "home"
+        ? _boxscore!.PlayerByGameStats!.HomeTeam
+        : _boxscore!.PlayerByGameStats!.AwayTeam;
+
+    private string GetCurrentTeamAbbrev() => _statsTeam == "home"
+        ? _landing!.HomeTeam.Abbrev
+        : _landing!.AwayTeam.Abbrev;
+
+    private void NavigateToPlayer(int playerId)
+    {
+        Navigation.NavigateTo($"/player/{playerId}");
+    }
+
+    public void Dispose()
+    {
+        GameState.OnStateChanged -= OnGameStateChanged;
+        GameState.UnregisterViewer();
+    }
+}

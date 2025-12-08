@@ -1,0 +1,462 @@
+@page "/schedule"
+@using PuckDrop.Models.Api
+@using PuckDrop.Models.Domain
+@using PuckDrop.Services
+@inject ITeamService TeamService
+@inject INhlApiClient NhlApiClient
+@inject NavigationManager Navigation
+@rendermode InteractiveServer
+
+<PageTitle>NHL Monitor - Schedule</PageTitle>
+
+<h1>Season Schedule</h1>
+
+@if (_isLoading)
+{
+    <div class="loading">
+        <div class="spinner"></div>
+    </div>
+}
+else
+{
+    <!-- Team Header with Selector -->
+    <div class="card mb-3">
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--spacing-md);">
+            <div style="display: flex; align-items: center; gap: var(--spacing-md);">
+                @if (!string.IsNullOrEmpty(_selectedTeamAbbrev))
+                {
+                    <a href="/team/@_selectedTeamAbbrev">
+                        <img src="@TeamLogoHelper.GetLogoUrl(_selectedTeamAbbrev)" alt="@GetSelectedTeamName()" class="team-logo" />
+                    </a>
+                    <div>
+                        <h2 style="margin: 0;">@GetSelectedTeamName()</h2>
+                        <span class="text-muted">@GetCurrentSeason() Season</span>
+                    </div>
+                }
+                else
+                {
+                    <div>
+                        <h2 style="margin: 0;">Select a Team</h2>
+                        <span class="text-muted">@GetCurrentSeason() Season</span>
+                    </div>
+                }
+            </div>
+            <div style="display: flex; align-items: center; gap: var(--spacing-sm);">
+                <label for="team-select" class="text-muted" style="white-space: nowrap;">Team:</label>
+                <select id="team-select" class="form-select" @onchange="OnTeamChanged" value="@_selectedTeamAbbrev">
+                    <option value="">-- Select Team --</option>
+                    @foreach (var team in _allTeams)
+                    {
+                        <option value="@team.Abbrev">@team.Name</option>
+                    }
+                </select>
+            </div>
+        </div>
+    </div>
+
+    @if (string.IsNullOrEmpty(_selectedTeamAbbrev))
+    {
+        <div class="card">
+            <p class="text-muted text-center mb-0">Please select a team to view their schedule.</p>
+        </div>
+    }
+    else if (_isLoadingSchedule)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+        </div>
+    }
+    else
+    {
+        <!-- Filters -->
+        <div class="filter-bar">
+            <button class="filter-btn @(_filter == ScheduleFilter.All ? "active" : "")"
+                    @onclick="() => SetFilter(ScheduleFilter.All)">
+                All Games (@_allGames.Count)
+            </button>
+            <button class="filter-btn @(_filter == ScheduleFilter.Completed ? "active" : "")"
+                    @onclick="() => SetFilter(ScheduleFilter.Completed)">
+                Completed (@_completedGames.Count)
+            </button>
+            <button class="filter-btn @(_filter == ScheduleFilter.Upcoming ? "active" : "")"
+                    @onclick="() => SetFilter(ScheduleFilter.Upcoming)">
+                Upcoming (@_upcomingGames.Count)
+            </button>
+            <button class="filter-btn @(_filter == ScheduleFilter.Preseason ? "active" : "")"
+                    @onclick="() => SetFilter(ScheduleFilter.Preseason)">
+                Preseason (@_preseasonGames.Count)
+            </button>
+            <button class="filter-btn @(_filter == ScheduleFilter.Playoffs ? "active" : "")"
+                    @onclick="() => SetFilter(ScheduleFilter.Playoffs)">
+                Playoffs (@_playoffGames.Count)
+            </button>
+        </div>
+
+        <!-- Games List -->
+        <div style="display: flex; flex-direction: column; gap: var(--spacing-sm);">
+            @if (_filteredGames.Count == 0)
+            {
+                <div class="card">
+                    <p class="text-muted text-center mb-0">No games found for this filter.</p>
+                </div>
+            }
+            else
+            {
+                @foreach (var game in _filteredGames)
+                {
+                    var isToday = game.StartTimeUtc.Date == DateTime.UtcNow.Date;
+                    var isLive = game.GameState == "LIVE" || game.GameState == "CRIT";
+                    var isCompleted = game.GameState == "OFF" || game.GameState == "FINAL";
+
+                    <a href="/game/@game.Id" class="game-card @(isToday ? "today" : "")" style="text-decoration: none;">
+                        <!-- Date Column -->
+                        <div style="min-width: 80px;">
+                            <div class="game-date">@FormatGameDate(game.StartTimeUtc)</div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);">
+                                @FormatGameTime(game.StartTimeUtc)
+                            </div>
+                        </div>
+
+                        <!-- Teams -->
+                        <div class="game-teams">
+                            <div style="display: flex; align-items: center; gap: var(--spacing-sm); min-width: 150px;">
+                                <img src="@TeamLogoHelper.GetLogoUrl(game.AwayTeam.Abbrev)" alt="@game.AwayTeam.Abbrev" class="team-logo-sm" />
+                                <span style="@(game.AwayTeam.Abbrev == _selectedTeamAbbrev ? "font-weight: 700;" : "")">
+                                    @GetTeamDisplayName(game.AwayTeam)
+                                </span>
+                            </div>
+
+                            @if (isCompleted || isLive)
+                            {
+                                <div style="display: flex; align-items: center; gap: var(--spacing-md);">
+                                    <span class="game-score @(game.AwayTeam.Score > game.HomeTeam.Score ? "text-success" : "")">
+                                        @game.AwayTeam.Score
+                                    </span>
+                                    <span class="text-muted">-</span>
+                                    <span class="game-score @(game.HomeTeam.Score > game.AwayTeam.Score ? "text-success" : "")">
+                                        @game.HomeTeam.Score
+                                    </span>
+                                </div>
+                            }
+                            else
+                            {
+                                <span class="text-muted">vs</span>
+                            }
+
+                            <div style="display: flex; align-items: center; gap: var(--spacing-sm); min-width: 150px;">
+                                <img src="@TeamLogoHelper.GetLogoUrl(game.HomeTeam.Abbrev)" alt="@game.HomeTeam.Abbrev" class="team-logo-sm" />
+                                <span style="@(game.HomeTeam.Abbrev == _selectedTeamAbbrev ? "font-weight: 700;" : "")">
+                                    @GetTeamDisplayName(game.HomeTeam)
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Home/Away Badge -->
+                        <span class="badge @(game.HomeTeam.Abbrev == _selectedTeamAbbrev ? "badge-home" : "badge-away")">
+                            @(game.HomeTeam.Abbrev == _selectedTeamAbbrev ? "HOME" : "AWAY")
+                        </span>
+
+                        <!-- Status -->
+                        @if (isLive)
+                        {
+                            <span class="game-status live">
+                                LIVE @(game.PeriodDescriptor != null ? $"P{game.PeriodDescriptor.Number}" : "")
+                            </span>
+                        }
+                        else if (isCompleted)
+                        {
+                            <span class="game-status final">
+                                @GetGameResultText(game)
+                            </span>
+                        }
+                        else
+                        {
+                            <span class="game-status upcoming">
+                                @GetGameTypeText(game.GameType)
+                            </span>
+                        }
+                    </a>
+                }
+            }
+        </div>
+    }
+}
+
+@code {
+    private bool _isLoading = true;
+    private bool _isLoadingSchedule;
+    private FavoriteTeam? _favoriteTeam;
+    private List<NhlTeamInfo> _allTeams = new();
+    private string? _selectedTeamAbbrev;
+    private List<ScheduleGame> _allGames = new();
+    private List<ScheduleGame> _filteredGames = new();
+    private List<ScheduleGame> _completedGames = new();
+    private List<ScheduleGame> _upcomingGames = new();
+    private List<ScheduleGame> _preseasonGames = new();
+    private List<ScheduleGame> _playoffGames = new();
+    private ScheduleFilter _filter = ScheduleFilter.All;
+
+    private enum ScheduleFilter
+    {
+        All,
+        Completed,
+        Upcoming,
+        Preseason,
+        Playoffs
+    }
+
+    /// <summary>
+    /// Initializes the component.
+    /// </summary>
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    /// <summary>
+    /// Loads initial data including teams and favorite team.
+    /// </summary>
+    private async Task LoadDataAsync()
+    {
+        _isLoading = true;
+
+        try
+        {
+            // Load all teams for dropdown
+            _allTeams = await TeamService.GetAllTeamsAsync();
+
+            // Get favorite team and default to it
+            _favoriteTeam = await TeamService.GetFavoriteTeamAsync();
+            if (_favoriteTeam != null)
+            {
+                _selectedTeamAbbrev = _favoriteTeam.TeamAbbrev;
+                await LoadScheduleAsync();
+            }
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    /// <summary>
+    /// Handles team selection change.
+    /// </summary>
+    private async Task OnTeamChanged(ChangeEventArgs e)
+    {
+        _selectedTeamAbbrev = e.Value?.ToString();
+        if (!string.IsNullOrEmpty(_selectedTeamAbbrev))
+        {
+            await LoadScheduleAsync();
+        }
+        else
+        {
+            ClearSchedule();
+        }
+    }
+
+    /// <summary>
+    /// Loads schedule for the selected team.
+    /// </summary>
+    private async Task LoadScheduleAsync()
+    {
+        if (string.IsNullOrEmpty(_selectedTeamAbbrev))
+        {
+            return;
+        }
+
+        _isLoadingSchedule = true;
+        StateHasChanged();
+
+        try
+        {
+            var season = NhlApiClient.GetCurrentSeason();
+            var schedule = await NhlApiClient.GetSeasonScheduleAsync(_selectedTeamAbbrev, season);
+
+            if (schedule?.Games != null)
+            {
+                _allGames = schedule.Games.OrderBy(g => g.StartTimeUtc).ToList();
+
+                // Categorize games
+                _completedGames = _allGames
+                    .Where(g => g.GameState == "OFF" || g.GameState == "FINAL")
+                    .ToList();
+
+                _upcomingGames = _allGames
+                    .Where(g => g.GameState == "FUT" || g.GameState == "PRE")
+                    .ToList();
+
+                _preseasonGames = _allGames
+                    .Where(g => g.GameType == 1)
+                    .ToList();
+
+                _playoffGames = _allGames
+                    .Where(g => g.GameType == 3)
+                    .ToList();
+
+                ApplyFilter();
+            }
+            else
+            {
+                ClearSchedule();
+            }
+        }
+        finally
+        {
+            _isLoadingSchedule = false;
+        }
+    }
+
+    /// <summary>
+    /// Clears the schedule data.
+    /// </summary>
+    private void ClearSchedule()
+    {
+        _allGames.Clear();
+        _filteredGames.Clear();
+        _completedGames.Clear();
+        _upcomingGames.Clear();
+        _preseasonGames.Clear();
+        _playoffGames.Clear();
+    }
+
+    /// <summary>
+    /// Gets the selected team name.
+    /// </summary>
+    private string GetSelectedTeamName()
+    {
+        return TeamLogoHelper.GetTeamName(_selectedTeamAbbrev);
+    }
+
+    /// <summary>
+    /// Sets the active filter.
+    /// </summary>
+    /// <param name="filter">The filter to set.</param>
+    private void SetFilter(ScheduleFilter filter)
+    {
+        _filter = filter;
+        ApplyFilter();
+    }
+
+    /// <summary>
+    /// Applies the current filter to the games list.
+    /// </summary>
+    private void ApplyFilter()
+    {
+        _filteredGames = _filter switch
+        {
+            ScheduleFilter.Completed => _completedGames,
+            ScheduleFilter.Upcoming => _upcomingGames,
+            ScheduleFilter.Preseason => _preseasonGames,
+            ScheduleFilter.Playoffs => _playoffGames,
+            _ => _allGames
+        };
+    }
+
+    /// <summary>
+    /// Gets the current season display string.
+    /// </summary>
+    /// <returns>Season display string.</returns>
+    private string GetCurrentSeason()
+    {
+        var season = NhlApiClient.GetCurrentSeason();
+        var startYear = season / 10000;
+        var endYear = season % 10000;
+        return $"{startYear}-{endYear % 100:D2}";
+    }
+
+    /// <summary>
+    /// Formats a game date for display.
+    /// </summary>
+    /// <param name="utcDate">The UTC date.</param>
+    /// <returns>Formatted date string.</returns>
+    private static string FormatGameDate(DateTime utcDate)
+    {
+        var localDate = utcDate.ToLocalTime();
+        return localDate.ToString("ddd, MMM d");
+    }
+
+    /// <summary>
+    /// Formats a game time for display.
+    /// </summary>
+    /// <param name="utcDate">The UTC date.</param>
+    /// <returns>Formatted time string.</returns>
+    private static string FormatGameTime(DateTime utcDate)
+    {
+        var localDate = utcDate.ToLocalTime();
+        return localDate.ToString("h:mm tt");
+    }
+
+    /// <summary>
+    /// Gets the team display name from schedule team.
+    /// </summary>
+    /// <param name="team">The schedule team.</param>
+    /// <returns>Display name.</returns>
+    private static string GetTeamDisplayName(ScheduleTeam team)
+    {
+        if (team.CommonName?.Default != null)
+        {
+            return team.CommonName.Default;
+        }
+        return team.Abbrev;
+    }
+
+    /// <summary>
+    /// Gets the game type text.
+    /// </summary>
+    /// <param name="gameType">The game type code.</param>
+    /// <returns>Game type text.</returns>
+    private static string GetGameTypeText(int gameType)
+    {
+        return gameType switch
+        {
+            1 => "PRE",
+            2 => "REG",
+            3 => "PLAY",
+            _ => ""
+        };
+    }
+
+    /// <summary>
+    /// Gets the game result text.
+    /// </summary>
+    /// <param name="game">The game.</param>
+    /// <returns>Result text.</returns>
+    private string GetGameResultText(ScheduleGame game)
+    {
+        if (string.IsNullOrEmpty(_selectedTeamAbbrev))
+        {
+            return "FINAL";
+        }
+
+        var isHome = game.HomeTeam.Abbrev == _selectedTeamAbbrev;
+        var selectedScore = isHome ? game.HomeTeam.Score : game.AwayTeam.Score;
+        var opponentScore = isHome ? game.AwayTeam.Score : game.HomeTeam.Score;
+
+        string result;
+        if (selectedScore > opponentScore)
+        {
+            result = "W";
+        }
+        else if (selectedScore < opponentScore)
+        {
+            result = "L";
+        }
+        else
+        {
+            return "FINAL";
+        }
+
+        var suffix = "";
+        if (game.GameOutcome?.LastPeriodType == "OT")
+        {
+            suffix = "/OT";
+        }
+        else if (game.GameOutcome?.LastPeriodType == "SO")
+        {
+            suffix = "/SO";
+        }
+
+        return result + suffix;
+    }
+}

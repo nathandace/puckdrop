@@ -1,0 +1,438 @@
+@page "/standings"
+@using PuckDrop.Models.Api
+@using PuckDrop.Services
+@inject INhlApiClient NhlApiClient
+@inject ITeamService TeamService
+@rendermode InteractiveServer
+
+<PageTitle>NHL Monitor - Standings</PageTitle>
+
+<div class="standings-page">
+    <div class="page-header">
+        <h1>League Standings</h1>
+        <p class="text-muted">@DateTime.Now.ToString("MMMM d, yyyy")</p>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+        </div>
+    }
+    else if (_standings == null)
+    {
+        <div class="card">
+            <p>Unable to load standings data.</p>
+        </div>
+    }
+    else
+    {
+        <!-- View Toggle -->
+        <div class="filter-bar">
+            <button class="filter-btn @(_viewMode == ViewMode.Playoffs ? "active" : "")" @onclick="() => _viewMode = ViewMode.Playoffs">
+                Playoff Picture
+            </button>
+            <button class="filter-btn @(_viewMode == ViewMode.League ? "active" : "")" @onclick="() => _viewMode = ViewMode.League">
+                League
+            </button>
+            <button class="filter-btn @(_viewMode == ViewMode.Conference ? "active" : "")" @onclick="() => _viewMode = ViewMode.Conference">
+                Conference
+            </button>
+            <button class="filter-btn @(_viewMode == ViewMode.Division ? "active" : "")" @onclick="() => _viewMode = ViewMode.Division">
+                Division
+            </button>
+            <button class="filter-btn @(_viewMode == ViewMode.WildCard ? "active" : "")" @onclick="() => _viewMode = ViewMode.WildCard">
+                Wild Card
+            </button>
+        </div>
+
+        @if (_viewMode == ViewMode.Playoffs)
+        {
+            <div class="playoff-picture">
+                <p class="playoff-subtitle">If the season ended today...</p>
+
+                @foreach (var conference in new[] { "Eastern", "Western" })
+                {
+                    var confTeams = _standings.Standings.Where(t => t.ConferenceName == conference).ToList();
+                    var divisions = confTeams.GroupBy(t => t.DivisionName).OrderBy(d => d.Key).ToList();
+
+                    // Top 3 from each division qualify automatically (6 teams per conference)
+                    var divisionQualifiers = new List<(TeamStanding Team, int DivRank, string Division)>();
+                    var nonQualifiers = new List<TeamStanding>();
+
+                    foreach (var division in divisions)
+                    {
+                        var sortedDiv = division
+                            .OrderByDescending(t => t.Points)
+                            .ThenByDescending(t => t.PointPctg)
+                            .ToList();
+
+                        // Top 3 qualify
+                        for (int i = 0; i < sortedDiv.Count; i++)
+                        {
+                            if (i < 3)
+                            {
+                                divisionQualifiers.Add((sortedDiv[i], i + 1, division.Key));
+                            }
+                            else
+                            {
+                                nonQualifiers.Add(sortedDiv[i]);
+                            }
+                        }
+                    }
+
+                    // Sort non-qualifiers by points for wild card consideration
+                    nonQualifiers = nonQualifiers
+                        .OrderByDescending(t => t.Points)
+                        .ThenByDescending(t => t.PointPctg)
+                        .ToList();
+
+                    // Wild card teams (top 2 of remaining)
+                    var wildcardTeams = nonQualifiers.Take(2).ToList();
+
+                    // Bubble teams (next 3)
+                    var bubbleTeams = nonQualifiers.Skip(2).Take(3).ToList();
+
+                    // Out of playoff picture
+                    var outTeams = nonQualifiers.Skip(5).ToList();
+
+                    // Get the wild card cutoff points for "points back" calculation
+                    var wcCutoffPoints = wildcardTeams.Any() ? wildcardTeams.Last().Points : 0;
+
+                    <div class="playoff-conference">
+                        <h2 class="conference-header">@conference Conference</h2>
+
+                        <div class="playoff-grid">
+                            @foreach (var division in divisions)
+                            {
+                                var divQualifiers = divisionQualifiers
+                                    .Where(d => d.Division == division.Key)
+                                    .OrderBy(d => d.DivRank)
+                                    .ToList();
+
+                                <!-- Division Qualifiers -->
+                                <div class="playoff-section playoff-in">
+                                    <div class="section-label">
+                                        <span class="status-badge in">IN</span>
+                                        <span>@division.Key Division</span>
+                                    </div>
+                                    @foreach (var (team, divRank, _) in divQualifiers)
+                                    {
+                                        var seedLabel = divRank == 1 ? "Leader" : $"#{divRank}";
+                                        @RenderPlayoffTeamRow(team, divRank, "division-qualifier", seedLabel)
+                                    }
+                                </div>
+                            }
+
+                            <!-- IN: Wild Card -->
+                            <div class="playoff-section playoff-in">
+                                <div class="section-label">
+                                    <span class="status-badge in">IN</span>
+                                    <span>Wild Card</span>
+                                </div>
+                                @foreach (var (team, idx) in wildcardTeams.Select((t, i) => (t, i)))
+                                {
+                                    @RenderPlayoffTeamRow(team, null, "wildcard", $"WC{idx + 1}")
+                                }
+                            </div>
+
+                            <!-- BUBBLE -->
+                            <div class="playoff-section playoff-bubble">
+                                <div class="section-label">
+                                    <span class="status-badge bubble">BUBBLE</span>
+                                    <span>In the Hunt</span>
+                                </div>
+                                @foreach (var team in bubbleTeams)
+                                {
+                                    var pointsBack = wcCutoffPoints - team.Points;
+                                    @RenderPlayoffTeamRow(team, null, "bubble", $"{pointsBack} PTS back")
+                                }
+                            </div>
+
+                            <!-- OUT -->
+                            <div class="playoff-section playoff-out">
+                                <div class="section-label">
+                                    <span class="status-badge out">OUT</span>
+                                    <span>Outside Looking In</span>
+                                </div>
+                                @foreach (var team in outTeams)
+                                {
+                                    var pointsBack = wcCutoffPoints - team.Points;
+                                    @RenderPlayoffTeamRow(team, null, "out", $"{pointsBack} PTS back")
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        else if (_viewMode == ViewMode.League)
+        {
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">NHL Standings</h3>
+                </div>
+                <div class="table-responsive">
+                    <table class="table standings-table">
+                        <thead>
+                            <tr>
+                                <th class="rank-col">#</th>
+                                <th class="team-col">Team</th>
+                                <th>GP</th>
+                                <th>W</th>
+                                <th>L</th>
+                                <th>OTL</th>
+                                <th class="points-col">PTS</th>
+                                <th>P%</th>
+                                <th>GF</th>
+                                <th>GA</th>
+                                <th>DIFF</th>
+                                <th>STRK</th>
+                                <th>L10</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var (team, index) in _standings.Standings.OrderByDescending(t => t.Points).ThenByDescending(t => t.PointPctg).Select((t, i) => (t, i)))
+                            {
+                                var isFavorite = team.TeamAbbrev.Default == _favoriteTeam?.TeamAbbrev;
+                                <tr class="@(isFavorite ? "favorite-team" : "")">
+                                    <td class="rank-col">@(index + 1)</td>
+                                    <td class="team-col">
+                                        <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="@team.TeamAbbrev.Default" class="team-logo-sm" />
+                                        <span class="team-name">@team.TeamName.Default</span>
+                                        <span class="team-abbrev">@team.TeamAbbrev.Default</span>
+                                    </td>
+                                    <td>@team.GamesPlayed</td>
+                                    <td class="win-col">@team.Wins</td>
+                                    <td class="loss-col">@team.Losses</td>
+                                    <td>@team.OtLosses</td>
+                                    <td class="points-col">@team.Points</td>
+                                    <td>@team.PointPctg.ToString("P1")</td>
+                                    <td>@team.GoalFor</td>
+                                    <td>@team.GoalAgainst</td>
+                                    <td class="@GetDiffClass(team.GoalDifferential)">@FormatDiff(team.GoalDifferential)</td>
+                                    <td class="@GetStreakClass(team.StreakCode)">@team.StreakCode@team.StreakCount</td>
+                                    <td>@team.L10Wins-@team.L10Losses-@team.L10OtLosses</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+        else if (_viewMode == ViewMode.Conference)
+        {
+            @foreach (var conference in new[] { "Eastern", "Western" })
+            {
+                var teams = _standings.Standings.Where(t => t.ConferenceName == conference).OrderByDescending(t => t.Points).ThenByDescending(t => t.PointPctg);
+                <div class="card mb-3">
+                    <div class="card-header">
+                        <h3 class="card-title">@conference Conference</h3>
+                    </div>
+                    <div class="table-responsive">
+                        @RenderStandingsTable(teams)
+                    </div>
+                </div>
+            }
+        }
+        else if (_viewMode == ViewMode.Division)
+        {
+            @foreach (var conference in new[] { "Eastern", "Western" })
+            {
+                <h2 class="conference-header">@conference Conference</h2>
+                var divisions = _standings.Standings.Where(t => t.ConferenceName == conference).GroupBy(t => t.DivisionName).OrderBy(g => g.Key);
+                <div class="divisions-grid">
+                    @foreach (var division in divisions)
+                    {
+                        var teams = division.OrderByDescending(t => t.Points).ThenByDescending(t => t.PointPctg);
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 class="card-title">@division.Key</h3>
+                            </div>
+                            <div class="table-responsive">
+                                @RenderCompactStandingsTable(teams)
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        }
+        else if (_viewMode == ViewMode.WildCard)
+        {
+            @foreach (var conference in new[] { "Eastern", "Western" })
+            {
+                <h2 class="conference-header">@conference Conference</h2>
+                var confTeams = _standings.Standings.Where(t => t.ConferenceName == conference).ToList();
+                var divisions = confTeams.GroupBy(t => t.DivisionName).ToList();
+
+                <div class="wildcard-container">
+                    @foreach (var division in divisions)
+                    {
+                        var divisionLeaders = division.OrderByDescending(t => t.Points).Take(3);
+                        <div class="card wildcard-division">
+                            <div class="card-header">
+                                <h3 class="card-title">@division.Key</h3>
+                            </div>
+                            @RenderCompactStandingsTable(divisionLeaders)
+                        </div>
+                    }
+
+                    @{
+                        var wildcardTeams = confTeams
+                            .GroupBy(t => t.DivisionName)
+                            .SelectMany(g => g.OrderByDescending(t => t.Points).Skip(3))
+                            .OrderByDescending(t => t.Points)
+                            .ThenByDescending(t => t.PointPctg);
+                    }
+                    <div class="card wildcard-teams">
+                        <div class="card-header">
+                            <h3 class="card-title">Wild Card</h3>
+                        </div>
+                        @RenderCompactStandingsTable(wildcardTeams, showWildcardLine: true)
+                    </div>
+                </div>
+            }
+        }
+    }
+</div>
+
+@code {
+    private bool _isLoading = true;
+    private StandingsResponse? _standings;
+    private Models.Domain.FavoriteTeam? _favoriteTeam;
+    private ViewMode _viewMode = ViewMode.Playoffs;
+
+    private enum ViewMode { Playoffs, League, Conference, Division, WildCard }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _favoriteTeam = await TeamService.GetFavoriteTeamAsync();
+        _standings = await NhlApiClient.GetStandingsAsync();
+        _isLoading = false;
+    }
+
+    private RenderFragment RenderStandingsTable(IEnumerable<TeamStanding> teams) => __builder =>
+    {
+        <table class="table standings-table">
+            <thead>
+                <tr>
+                    <th class="rank-col">#</th>
+                    <th class="team-col">Team</th>
+                    <th>GP</th>
+                    <th>W</th>
+                    <th>L</th>
+                    <th>OTL</th>
+                    <th class="points-col">PTS</th>
+                    <th>P%</th>
+                    <th>DIFF</th>
+                    <th>STRK</th>
+                </tr>
+            </thead>
+            <tbody>
+                @{var index = 0;}
+                @foreach (var team in teams)
+                {
+                    index++;
+                    var isFavorite = team.TeamAbbrev.Default == _favoriteTeam?.TeamAbbrev;
+                    <tr class="@(isFavorite ? "favorite-team" : "")">
+                        <td class="rank-col">@index</td>
+                        <td class="team-col">
+                            <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="@team.TeamAbbrev.Default" class="team-logo-sm" />
+                            <span class="team-name">@team.TeamName.Default</span>
+                        </td>
+                        <td>@team.GamesPlayed</td>
+                        <td class="win-col">@team.Wins</td>
+                        <td class="loss-col">@team.Losses</td>
+                        <td>@team.OtLosses</td>
+                        <td class="points-col">@team.Points</td>
+                        <td>@team.PointPctg.ToString("P1")</td>
+                        <td class="@GetDiffClass(team.GoalDifferential)">@FormatDiff(team.GoalDifferential)</td>
+                        <td class="@GetStreakClass(team.StreakCode)">@team.StreakCode@team.StreakCount</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    };
+
+    private RenderFragment RenderCompactStandingsTable(IEnumerable<TeamStanding> teams, bool showWildcardLine = false) => __builder =>
+    {
+        <table class="table standings-table compact">
+            <thead>
+                <tr>
+                    <th class="team-col">Team</th>
+                    <th>GP</th>
+                    <th>W</th>
+                    <th>L</th>
+                    <th>OT</th>
+                    <th class="points-col">PTS</th>
+                </tr>
+            </thead>
+            <tbody>
+                @{var index = 0;}
+                @foreach (var team in teams)
+                {
+                    index++;
+                    var isFavorite = team.TeamAbbrev.Default == _favoriteTeam?.TeamAbbrev;
+                    var showLine = showWildcardLine && index == 3; // Line after 2nd wild card spot
+                    <tr class="@(isFavorite ? "favorite-team" : "") @(showLine ? "wildcard-cutoff" : "")">
+                        <td class="team-col">
+                            <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="@team.TeamAbbrev.Default" class="team-logo-sm" />
+                            <span class="team-abbrev">@team.TeamAbbrev.Default</span>
+                        </td>
+                        <td>@team.GamesPlayed</td>
+                        <td>@team.Wins</td>
+                        <td>@team.Losses</td>
+                        <td>@team.OtLosses</td>
+                        <td class="points-col">@team.Points</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    };
+
+    private static string GetDiffClass(int diff)
+    {
+        return diff switch
+        {
+            > 0 => "diff-positive",
+            < 0 => "diff-negative",
+            _ => ""
+        };
+    }
+
+    private static string FormatDiff(int diff)
+    {
+        return diff > 0 ? $"+{diff}" : diff.ToString();
+    }
+
+    private static string GetStreakClass(string? streakCode)
+    {
+        return streakCode switch
+        {
+            "W" => "streak-win",
+            "L" => "streak-loss",
+            "OT" => "streak-ot",
+            _ => ""
+        };
+    }
+
+    private RenderFragment RenderPlayoffTeamRow(TeamStanding team, int? seed, string statusClass, string label) => __builder =>
+    {
+        var isFavorite = team.TeamAbbrev.Default == _favoriteTeam?.TeamAbbrev;
+        <a href="/team/@team.TeamAbbrev.Default" class="playoff-team-row @statusClass @(isFavorite ? "favorite-team" : "")">
+            @if (seed.HasValue)
+            {
+                <span class="playoff-seed">@seed</span>
+            }
+            else
+            {
+                <span class="playoff-seed empty"></span>
+            }
+            <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="@team.TeamAbbrev.Default" class="team-logo-sm" />
+            <span class="team-name">@team.TeamAbbrev.Default</span>
+            <span class="team-record">@team.Wins-@team.Losses-@team.OtLosses</span>
+            <span class="team-points">@team.Points PTS</span>
+            <span class="playoff-label">@label</span>
+        </a>
+    };
+}

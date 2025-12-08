@@ -1,0 +1,250 @@
+@using PuckDrop.Models.Api
+@inject IJSRuntime JS
+
+<div class="shot-chart">
+    <div class="section-header">
+        <h3>Shot Chart</h3>
+        <div class="chart-controls">
+            <select class="form-control form-control-sm" @bind="_selectedPlayerId">
+                <option value="0">All Players</option>
+                @if (RosterSpots != null)
+                {
+                    var shooters = GetShooters();
+                    var awayShooters = shooters.Where(s => s.TeamId == AwayTeamId).OrderBy(s => s.Name);
+                    var homeShooters = shooters.Where(s => s.TeamId == HomeTeamId).OrderBy(s => s.Name);
+
+                    @if (awayShooters.Any())
+                    {
+                        <optgroup label="@AwayTeamAbbrev">
+                            @foreach (var shooter in awayShooters)
+                            {
+                                <option value="@shooter.PlayerId">@shooter.Name (@shooter.ShotCount)</option>
+                            }
+                        </optgroup>
+                    }
+                    @if (homeShooters.Any())
+                    {
+                        <optgroup label="@HomeTeamAbbrev">
+                            @foreach (var shooter in homeShooters)
+                            {
+                                <option value="@shooter.PlayerId">@shooter.Name (@shooter.ShotCount)</option>
+                            }
+                        </optgroup>
+                    }
+                }
+            </select>
+        </div>
+    </div>
+    <div class="chart-legend">
+        <span class="legend-item"><span class="marker goal"></span> Goal</span>
+        <span class="legend-item"><span class="marker shot"></span> Save</span>
+        <span class="legend-item"><span class="marker miss"></span> Miss</span>
+        <span class="legend-item"><span class="marker block"></span> Block</span>
+    </div>
+
+    <div class="chart-container">
+        <!-- Hockey Rink SVG -->
+        <svg viewBox="0 0 200 85" class="rink-svg" xmlns="http://www.w3.org/2000/svg">
+            <!-- Rink outline -->
+            <rect x="0" y="0" width="200" height="85" rx="14" ry="14" fill="none" stroke="var(--border-color)" stroke-width="0.5"/>
+
+            <!-- Center line -->
+            <line x1="100" y1="0" x2="100" y2="85" stroke="#C41E3A" stroke-width="0.5"/>
+
+            <!-- Blue lines -->
+            <line x1="75" y1="0" x2="75" y2="85" stroke="#0066B3" stroke-width="0.5"/>
+            <line x1="125" y1="0" x2="125" y2="85" stroke="#0066B3" stroke-width="0.5"/>
+
+            <!-- Goal lines -->
+            <line x1="11" y1="0" x2="11" y2="85" stroke="#C41E3A" stroke-width="0.3"/>
+            <line x1="189" y1="0" x2="189" y2="85" stroke="#C41E3A" stroke-width="0.3"/>
+
+            <!-- Center circle -->
+            <circle cx="100" cy="42.5" r="15" fill="none" stroke="#0066B3" stroke-width="0.3"/>
+
+            <!-- Faceoff circles -->
+            <circle cx="31" cy="20.5" r="15" fill="none" stroke="#C41E3A" stroke-width="0.3"/>
+            <circle cx="31" cy="64.5" r="15" fill="none" stroke="#C41E3A" stroke-width="0.3"/>
+            <circle cx="169" cy="20.5" r="15" fill="none" stroke="#C41E3A" stroke-width="0.3"/>
+            <circle cx="169" cy="64.5" r="15" fill="none" stroke="#C41E3A" stroke-width="0.3"/>
+
+            <!-- Creases -->
+            <path d="M 5 38 L 5 47 Q 11 42.5 5 38" fill="rgba(0,102,179,0.2)" stroke="#0066B3" stroke-width="0.3"/>
+            <path d="M 195 38 L 195 47 Q 189 42.5 195 38" fill="rgba(0,102,179,0.2)" stroke="#0066B3" stroke-width="0.3"/>
+
+            <!-- Goals -->
+            <rect x="0" y="39" width="4" height="7" fill="none" stroke="var(--text-muted)" stroke-width="0.3"/>
+            <rect x="196" y="39" width="4" height="7" fill="none" stroke="var(--text-muted)" stroke-width="0.3"/>
+        </svg>
+
+        <!-- Shot markers overlay -->
+        <div class="shots-overlay">
+            @if (Plays != null)
+            {
+                @foreach (var play in GetFilteredShotPlays())
+                {
+                    var (x, y) = TransformCoordinates(play);
+                    var markerClass = GetMarkerClass(play);
+                    var teamClass = GetTeamClass(play);
+
+                    <div class="shot-marker @markerClass @teamClass"
+                         style="left: @(x.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))%; top: @(y.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))%;"
+                         title="@GetTooltip(play)">
+                    </div>
+                }
+            }
+        </div>
+    </div>
+
+    <div class="chart-stats">
+        <div class="team-shots away">
+            <span class="team-abbrev">@AwayTeamAbbrev</span>
+            <span class="shot-count">@AwayShots shots</span>
+        </div>
+        <div class="chart-info">
+            <span class="text-muted">@PlottedShots plotted</span>
+        </div>
+        <div class="team-shots home">
+            <span class="team-abbrev">@HomeTeamAbbrev</span>
+            <span class="shot-count">@HomeShots shots</span>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public List<Play>? Plays { get; set; }
+
+    [Parameter]
+    public string? HomeTeamAbbrev { get; set; }
+
+    [Parameter]
+    public string? AwayTeamAbbrev { get; set; }
+
+    [Parameter]
+    public int? HomeTeamId { get; set; }
+
+    [Parameter]
+    public int? AwayTeamId { get; set; }
+
+    [Parameter]
+    public List<RosterSpot>? RosterSpots { get; set; }
+
+    private int _selectedPlayerId;
+
+    private int AwayShots => GetFilteredShotPlays().Count(p => p.Details?.EventOwnerTeamId == AwayTeamId);
+    private int HomeShots => GetFilteredShotPlays().Count(p => p.Details?.EventOwnerTeamId == HomeTeamId);
+    private int PlottedShots => GetFilteredShotPlays().Count();
+
+    private IEnumerable<Play> GetShotPlays()
+    {
+        if (Plays == null) return Enumerable.Empty<Play>();
+        return Plays.Where(p => IsShotPlay(p) && HasCoordinates(p));
+    }
+
+    private IEnumerable<Play> GetFilteredShotPlays()
+    {
+        var shots = GetShotPlays();
+        if (_selectedPlayerId == 0) return shots;
+        return shots.Where(p => GetShooterId(p) == _selectedPlayerId);
+    }
+
+    private static int? GetShooterId(Play play)
+    {
+        return play.TypeDescKey == "goal"
+            ? play.Details?.ScoringPlayerId
+            : play.Details?.ShootingPlayerId;
+    }
+
+    private List<ShooterInfo> GetShooters()
+    {
+        if (Plays == null || RosterSpots == null) return new List<ShooterInfo>();
+
+        var shooterIds = GetShotPlays()
+            .Select(p => GetShooterId(p))
+            .Where(id => id.HasValue)
+            .GroupBy(id => id!.Value)
+            .Select(g => new { PlayerId = g.Key, ShotCount = g.Count() })
+            .ToList();
+
+        return shooterIds
+            .Select(s =>
+            {
+                var roster = RosterSpots.FirstOrDefault(r => r.PlayerId == s.PlayerId);
+                return new ShooterInfo
+                {
+                    PlayerId = s.PlayerId,
+                    Name = roster != null ? $"{roster.FirstName.Default} {roster.LastName.Default}" : "Unknown",
+                    TeamId = roster?.TeamId ?? 0,
+                    ShotCount = s.ShotCount
+                };
+            })
+            .OrderByDescending(s => s.ShotCount)
+            .ToList();
+    }
+
+    private class ShooterInfo
+    {
+        public int PlayerId { get; set; }
+        public string Name { get; set; } = "";
+        public int TeamId { get; set; }
+        public int ShotCount { get; set; }
+    }
+
+    private static bool IsShotPlay(Play play)
+    {
+        return play.TypeDescKey is "shot-on-goal" or "goal" or "missed-shot" or "blocked-shot";
+    }
+
+    private static bool HasCoordinates(Play play)
+    {
+        return play.Details?.XCoord != null && play.Details?.YCoord != null;
+    }
+
+    private (double x, double y) TransformCoordinates(Play play)
+    {
+        // NHL coordinates: x ranges from -100 to 100 (200 feet), y from -42.5 to 42.5 (85 feet)
+        var x = play.Details?.XCoord ?? 0;
+        var y = play.Details?.YCoord ?? 0;
+
+        // Normalize to 0-100% (use double literals to avoid integer division!)
+        var normalizedX = (x + 100.0) / 200.0 * 100.0;
+        var normalizedY = (y + 42.5) / 85.0 * 100.0;
+
+        return (normalizedX, normalizedY);
+    }
+
+    private static string GetMarkerClass(Play play)
+    {
+        return play.TypeDescKey switch
+        {
+            "goal" => "goal",
+            "shot-on-goal" => "shot",
+            "missed-shot" => "miss",
+            "blocked-shot" => "block",
+            _ => "shot"
+        };
+    }
+
+    private string GetTeamClass(Play play)
+    {
+        if (play.Details?.EventOwnerTeamId == HomeTeamId) return "home-team";
+        if (play.Details?.EventOwnerTeamId == AwayTeamId) return "away-team";
+        return "";
+    }
+
+    private string GetTooltip(Play play)
+    {
+        var type = play.TypeDescKey switch
+        {
+            "goal" => "GOAL",
+            "shot-on-goal" => "Shot on Goal",
+            "missed-shot" => "Missed Shot",
+            "blocked-shot" => "Blocked Shot",
+            _ => "Shot"
+        };
+
+        var team = play.Details?.EventOwnerTeamId == HomeTeamId ? HomeTeamAbbrev : AwayTeamAbbrev;
+        return $"{type} - {team} ({play.TimeInPeriod} P{play.PeriodDescriptor.Number})";
+    }
+}

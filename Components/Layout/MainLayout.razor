@@ -1,0 +1,58 @@
+@inherits LayoutComponentBase
+
+<a href="#main-content" class="skip-link">Skip to main content</a>
+
+<div class="app-container">
+    <header class="nav-header" role="banner">
+        <a href="/" class="nav-brand" aria-label="NHL Monitor Home">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2" fill="none"/>
+                <circle cx="16" cy="16" r="4" fill="currentColor"/>
+            </svg>
+            <span>NHL Monitor</span>
+        </a>
+        <nav aria-label="Main navigation">
+            <ul class="nav-links" role="list">
+                <li>
+                    <NavLink href="/" class="nav-link" Match="NavLinkMatch.All">
+                        Home
+                    </NavLink>
+                </li>
+                <li>
+                    <NavLink href="/schedule" class="nav-link">
+                        Schedule
+                    </NavLink>
+                </li>
+                <li>
+                    <NavLink href="/standings" class="nav-link">
+                        Standings
+                    </NavLink>
+                </li>
+                <li>
+                    <NavLink href="/webhooks" class="nav-link">
+                        Webhooks
+                    </NavLink>
+                </li>
+            </ul>
+        </nav>
+    </header>
+
+    <main id="main-content" class="main-content" role="main" tabindex="-1">
+        @Body
+    </main>
+
+    <footer class="nav-header" style="border-top: 1px solid var(--border-color); border-bottom: none;">
+        <span class="text-muted" style="font-size: 0.75rem;">
+            NHL Team Monitor &copy; @DateTime.Now.Year
+        </span>
+        <span class="text-muted" style="font-size: 0.75rem;">
+            Data provided by NHL API
+        </span>
+    </footer>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">X</span>
+</div>

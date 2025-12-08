@@ -1,0 +1,213 @@
+@using PuckDrop.Models.Api
+
+<div class="team-stats-comparison">
+    <div class="section-header">
+        <h3>Team Stats</h3>
+    </div>
+
+    @if (HasStats)
+    {
+        <div class="stats-grid">
+            @RenderStatRow("Shots", AwayStats.Shots, HomeStats.Shots)
+            @RenderStatRow("Hits", AwayStats.Hits, HomeStats.Hits)
+            @RenderStatRow("Blocks", AwayStats.Blocks, HomeStats.Blocks)
+            @RenderStatRow("PIM", AwayStats.Pim, HomeStats.Pim, isLowerBetter: true)
+            @RenderStatRow("Faceoff %", FormatPercent(AwayStats.FaceoffPct, true), FormatPercent(HomeStats.FaceoffPct, true), AwayStats.FaceoffPct, HomeStats.FaceoffPct)
+            @RenderStatRow("Power Play", AwayStats.PowerPlay, HomeStats.PowerPlay, AwayStats.PowerPlayPct, HomeStats.PowerPlayPct)
+            @RenderStatRow("Giveaways", AwayStats.Giveaways, HomeStats.Giveaways, isLowerBetter: true)
+            @RenderStatRow("Takeaways", AwayStats.Takeaways, HomeStats.Takeaways)
+        </div>
+    }
+    else
+    {
+        <div class="empty-state-sm">
+            <span class="text-muted">Stats not available</span>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public BoxscoreTeam? AwayTeam { get; set; }
+
+    [Parameter]
+    public BoxscoreTeam? HomeTeam { get; set; }
+
+    [Parameter]
+    public PlayerByGameStats? PlayerStats { get; set; }
+
+    [Parameter]
+    public List<TeamGameStat>? TeamGameStats { get; set; }
+
+    private bool HasStats => AwayTeam != null || PlayerStats != null || TeamGameStats != null;
+
+    private TeamTotals AwayStats => CalculateTeamStats(false);
+    private TeamTotals HomeStats => CalculateTeamStats(true);
+
+    private TeamTotals CalculateTeamStats(bool isHome)
+    {
+        var totals = new TeamTotals();
+
+        // Priority 1: Use right-rail TeamGameStats if available (most accurate)
+        if (TeamGameStats?.Count > 0)
+        {
+            totals.Shots = GetStatValue<int>("sog", isHome);
+            totals.Hits = GetStatValue<int>("hits", isHome);
+            totals.Blocks = GetStatValue<int>("blockedShots", isHome);
+            totals.Pim = GetStatValue<int>("pim", isHome);
+            totals.FaceoffPct = GetStatValue<double>("faceoffWinningPctg", isHome) * 100;
+            totals.PowerPlay = GetStatValue<string>("powerPlay", isHome) ?? "0/0";
+            totals.PowerPlayPct = GetStatValue<double>("powerPlayPctg", isHome);
+            totals.Giveaways = GetStatValue<int>("giveaways", isHome);
+            totals.Takeaways = GetStatValue<int>("takeaways", isHome);
+            return totals;
+        }
+
+        // Priority 2: Get shots from BoxscoreTeam
+        var team = isHome ? HomeTeam : AwayTeam;
+        totals.Shots = team?.Sog ?? 0;
+
+        // Priority 3: Calculate from player stats if available
+        if (PlayerStats != null)
+        {
+            var teamStats = isHome ? PlayerStats.HomeTeam : PlayerStats.AwayTeam;
+            var allSkaters = teamStats.Forwards.Concat(teamStats.Defense).ToList();
+            var goalies = teamStats.Goalies;
+
+            totals.Hits = allSkaters.Sum(p => p.Hits);
+            totals.Blocks = allSkaters.Sum(p => p.BlockedShots);
+            totals.Pim = allSkaters.Sum(p => p.Pim) + goalies.Sum(g => g.Pim);
+            totals.Giveaways = allSkaters.Sum(p => p.Giveaways);
+            totals.Takeaways = allSkaters.Sum(p => p.Takeaways);
+
+            // Calculate faceoff stats from parsed faceoff string (e.g., "5/10")
+            var faceoffWins = allSkaters.Sum(p => p.FaceoffWins ?? 0);
+            var faceoffTotal = allSkaters.Sum(p => p.FaceoffsTotal ?? 0);
+            if (faceoffTotal > 0)
+            {
+                totals.FaceoffPct = (double)faceoffWins / faceoffTotal * 100;
+            }
+
+            // Calculate power play from player stats
+            var ppGoals = allSkaters.Sum(p => p.PowerPlayGoals);
+            totals.PowerPlay = $"{ppGoals}";
+            totals.PowerPlayPct = ppGoals > 0 ? 1 : 0;
+        }
+
+        // Priority 4: Override with BoxscoreTeam values if they exist and are non-zero
+        if (team != null)
+        {
+            if (team.Hits > 0) totals.Hits = team.Hits;
+            if (team.Blocks > 0) totals.Blocks = team.Blocks;
+            if (team.Pim > 0) totals.Pim = team.Pim;
+            if (team.FaceoffWinningPctg.HasValue) totals.FaceoffPct = team.FaceoffWinningPctg.Value * 100;
+            if (!string.IsNullOrEmpty(team.PowerPlayConversion))
+            {
+                totals.PowerPlay = team.PowerPlayConversion;
+                totals.PowerPlayPct = GetPPPercent(team.PowerPlayConversion);
+            }
+        }
+
+        return totals;
+    }
+
+    private T? GetStatValue<T>(string category, bool isHome)
+    {
+        var stat = TeamGameStats?.FirstOrDefault(s => s.Category == category);
+        if (stat == null) return default;
+
+        var value = isHome ? stat.HomeValue : stat.AwayValue;
+        if (value == null) return default;
+
+        try
+        {
+            if (typeof(T) == typeof(int))
+            {
+                if (value is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    return (T)(object)je.GetInt32();
+                return (T)(object)Convert.ToInt32(value);
+            }
+            if (typeof(T) == typeof(double))
+            {
+                if (value is System.Text.Json.JsonElement je && je.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    return (T)(object)je.GetDouble();
+                return (T)(object)Convert.ToDouble(value);
+            }
+            if (typeof(T) == typeof(string))
+            {
+                if (value is System.Text.Json.JsonElement je)
+                    return (T)(object)je.GetString()!;
+                return (T)(object)value.ToString()!;
+            }
+        }
+        catch
+        {
+            return default;
+        }
+
+        return default;
+    }
+
+    private class TeamTotals
+    {
+        public int Shots { get; set; }
+        public int Hits { get; set; }
+        public int Blocks { get; set; }
+        public int Pim { get; set; }
+        public double FaceoffPct { get; set; }
+        public string PowerPlay { get; set; } = "0/0";
+        public double PowerPlayPct { get; set; }
+        public int Giveaways { get; set; }
+        public int Takeaways { get; set; }
+    }
+
+    private RenderFragment RenderStatRow(string label, object awayValue, object homeValue, double? awayNumeric = null, double? homeNumeric = null, bool isLowerBetter = false) => __builder =>
+    {
+        var awayNum = awayNumeric ?? GetNumericFromValue(awayValue);
+        var homeNum = homeNumeric ?? GetNumericFromValue(homeValue);
+        var awayWinning = isLowerBetter ? awayNum < homeNum : awayNum > homeNum;
+        var homeWinning = isLowerBetter ? homeNum < awayNum : homeNum > awayNum;
+
+        <div class="stat-row">
+            <div class="stat-value away @(awayWinning && Math.Abs(awayNum - homeNum) > 0.001 ? "winning" : "")">
+                @awayValue
+            </div>
+            <div class="stat-label">@label</div>
+            <div class="stat-value home @(homeWinning && Math.Abs(awayNum - homeNum) > 0.001 ? "winning" : "")">
+                @homeValue
+            </div>
+        </div>
+    };
+
+    private static string FormatPercent(double value, bool showZero = false)
+    {
+        if (value > 0 || showZero) return $"{value:F1}%";
+        return "-";
+    }
+
+    private static double GetPPPercent(string? ppConversion)
+    {
+        if (string.IsNullOrEmpty(ppConversion)) return 0;
+        var parts = ppConversion.Split('/');
+        if (parts.Length != 2) return 0;
+        if (!int.TryParse(parts[0], out var goals) || !int.TryParse(parts[1], out var attempts)) return 0;
+        return attempts > 0 ? (double)goals / attempts : 0;
+    }
+
+    private static double GetNumericFromValue(object value)
+    {
+        if (value is int i) return i;
+        if (value is double d) return d;
+        if (value is string s)
+        {
+            if (s.Contains('/'))
+            {
+                var parts = s.Split('/');
+                if (parts.Length == 2 && int.TryParse(parts[0], out var num) && int.TryParse(parts[1], out var den))
+                    return den > 0 ? (double)num / den : 0;
+            }
+            if (double.TryParse(s.TrimEnd('%'), out var parsed)) return parsed;
+        }
+        return 0;
+    }
+}

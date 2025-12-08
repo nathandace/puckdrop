@@ -1,0 +1,122 @@
+@using PuckDrop.Models.Api
+@inject NavigationManager Navigation
+
+<div class="scoring-summary">
+    <div class="section-header">
+        <h3>Scoring Summary</h3>
+    </div>
+
+    @if (Scoring == null || Scoring.Count == 0)
+    {
+        <div class="empty-state-sm">
+            <span class="text-muted">No goals scored yet</span>
+        </div>
+    }
+    else
+    {
+        @foreach (var period in Scoring.Where(p => p.Goals != null && p.Goals.Count > 0))
+        {
+            <div class="period-scoring">
+                <div class="period-header">
+                    <span class="period-label">@GetPeriodName(period.PeriodDescriptor)</span>
+                </div>
+                @foreach (var goal in period.Goals!)
+                {
+                    var isHomeTeam = goal.TeamAbbrev?.Default == HomeTeamAbbrev;
+                    var isFavoriteTeam = goal.TeamAbbrev?.Default == FavoriteTeamAbbrev;
+                    <div class="goal-item @(isFavoriteTeam ? "highlight" : "") @(isHomeTeam ? "home-goal" : "away-goal")">
+                        <div class="goal-team">
+                            <span class="team-abbrev @(isHomeTeam ? "home" : "away")">@goal.TeamAbbrev?.Default</span>
+                        </div>
+                        <div class="goal-info">
+                            <div class="goal-scorer">
+                                @if (goal.Headshot != null)
+                                {
+                                    <img src="@goal.Headshot" alt="" class="scorer-headshot" />
+                                }
+                                <a href="/player/@goal.PlayerId" class="scorer-name player-link">@goal.FirstName?.Default @goal.LastName?.Default</a>
+                                @if (!string.IsNullOrEmpty(goal.Strength) && goal.Strength != "ev")
+                                {
+                                    <span class="goal-type @goal.Strength">@GetGoalType(goal)</span>
+                                }
+                                @if (!string.IsNullOrEmpty(goal.GoalModifier) && goal.GoalModifier.ToLower() != "none")
+                                {
+                                    <span class="goal-modifier">@GetGoalModifier(goal.GoalModifier)</span>
+                                }
+                            </div>
+                            @if (goal.Assists != null && goal.Assists.Count > 0)
+                            {
+                                <div class="goal-assists">
+                                    <span class="assists-label">Assists:</span>
+                                    @foreach (var assist in goal.Assists)
+                                    {
+                                        <a href="/player/@assist.PlayerId" class="player-link">@assist.FirstName?.Default @assist.LastName?.Default</a>@(assist != goal.Assists.Last() ? ", " : "")
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="goal-assists unassisted">Unassisted</div>
+                            }
+                        </div>
+                        <div class="goal-time">
+                            <span class="time">@goal.TimeInPeriod</span>
+                            <span class="score">@goal.AwayScore - @goal.HomeScore</span>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public List<PeriodScoring>? Scoring { get; set; }
+
+    [Parameter]
+    public string? HomeTeamAbbrev { get; set; }
+
+    [Parameter]
+    public string? AwayTeamAbbrev { get; set; }
+
+    [Parameter]
+    public string? FavoriteTeamAbbrev { get; set; }
+
+    private static string GetPeriodName(PeriodDescriptor period)
+    {
+        return period.PeriodType switch
+        {
+            "OT" => period.Number > 4 ? $"{period.Number - 3}OT" : "Overtime",
+            "SO" => "Shootout",
+            _ => period.Number switch
+            {
+                1 => "1st Period",
+                2 => "2nd Period",
+                3 => "3rd Period",
+                _ => $"Period {period.Number}"
+            }
+        };
+    }
+
+    private static string GetGoalType(GoalInfo goal)
+    {
+        return goal.Strength switch
+        {
+            "pp" => "PPG",
+            "sh" => "SHG",
+            _ => ""
+        };
+    }
+
+    private static string GetGoalModifier(string modifier)
+    {
+        return modifier switch
+        {
+            "empty-net" => "EN",
+            "penalty-shot" => "PS",
+            "own-goal" => "OG",
+            _ => modifier.ToUpper()
+        };
+    }
+}

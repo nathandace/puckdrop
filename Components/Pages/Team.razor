@@ -1,0 +1,524 @@
+@page "/team/{TeamAbbrev}"
+@using PuckDrop.Models.Api
+@using PuckDrop.Services
+@inject INhlApiClient NhlApiClient
+@inject ITeamService TeamService
+@inject NavigationManager Navigation
+@rendermode InteractiveServer
+
+<PageTitle>NHL Monitor - @TeamLogoHelper.GetTeamName(TeamAbbrev)</PageTitle>
+
+<div class="team-page">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+        </div>
+    }
+    else
+    {
+        <!-- Team Header -->
+        <div class="team-header">
+            <img src="@TeamLogoHelper.GetLogoUrl(TeamAbbrev)" alt="@TeamAbbrev" class="team-logo-lg" />
+            <div class="team-header-info">
+                <h1>@TeamLogoHelper.GetTeamName(TeamAbbrev)</h1>
+                @if (_standing != null)
+                {
+                    <div class="team-record">
+                        <span class="record">@_standing.Wins-@_standing.Losses-@_standing.OtLosses</span>
+                        <span class="points">@_standing.Points PTS</span>
+                        <span class="rank">@GetStandingRank()</span>
+                    </div>
+                    <div class="team-stats-quick">
+                        <span>GF: @_standing.GoalFor</span>
+                        <span>GA: @_standing.GoalAgainst</span>
+                        <span class="@GetDiffClass(_standing.GoalDifferential)">DIFF: @FormatDiff(_standing.GoalDifferential)</span>
+                        <span>L10: @_standing.L10Wins-@_standing.L10Losses-@_standing.L10OtLosses</span>
+                        <span class="@GetStreakClass(_standing.StreakCode)">STRK: @_standing.StreakCode@_standing.StreakCount</span>
+                    </div>
+                }
+            </div>
+            @if (_favoriteTeam?.TeamAbbrev != TeamAbbrev)
+            {
+                <button class="btn btn-secondary" @onclick="SetAsFavorite">
+                    Set as Favorite
+                </button>
+            }
+            else
+            {
+                <span class="favorite-badge">Your Team</span>
+            }
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="team-tabs">
+            <button class="tab-btn @(_activeTab == "roster" ? "active" : "")" @onclick='() => _activeTab = "roster"'>
+                Roster
+            </button>
+            <button class="tab-btn @(_activeTab == "schedule" ? "active" : "")" @onclick='() => _activeTab = "schedule"'>
+                Schedule
+            </button>
+            <button class="tab-btn @(_activeTab == "standings" ? "active" : "")" @onclick='() => _activeTab = "standings"'>
+                Standings
+            </button>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="team-content">
+            @if (_activeTab == "roster")
+            {
+                @if (_clubStats != null)
+                {
+                    <!-- Skaters Table -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">Skaters</h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table player-stats-table roster-table">
+                                <thead>
+                                    <tr>
+                                        <th class="player-col">Player</th>
+                                        <th>POS</th>
+                                        <th>GP</th>
+                                        <th>G</th>
+                                        <th>A</th>
+                                        <th>PTS</th>
+                                        <th>+/-</th>
+                                        <th>PIM</th>
+                                        <th>PPG</th>
+                                        <th>SOG</th>
+                                        <th>S%</th>
+                                        <th>TOI</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var player in _clubStats.Skaters.OrderByDescending(p => p.Points).ThenByDescending(p => p.Goals))
+                                    {
+                                        <tr class="clickable-row" @onclick="() => NavigateToPlayer(player.PlayerId)">
+                                            <td class="player-col">
+                                                <img src="@player.Headshot" alt="" class="player-headshot-sm" onerror="this.src='/images/default-player.png'" />
+                                                <span class="player-name">@player.FullName</span>
+                                            </td>
+                                            <td>@player.PositionCode</td>
+                                            <td>@player.GamesPlayed</td>
+                                            <td class="@(player.Goals > 0 ? "stat-highlight" : "")">@player.Goals</td>
+                                            <td class="@(player.Assists > 0 ? "stat-highlight" : "")">@player.Assists</td>
+                                            <td class="@(player.Points > 0 ? "stat-highlight" : "")"><strong>@player.Points</strong></td>
+                                            <td class="@GetPlusMinusClass(player.PlusMinus)">@FormatPlusMinus(player.PlusMinus)</td>
+                                            <td>@player.PenaltyMinutes</td>
+                                            <td>@player.PowerPlayGoals</td>
+                                            <td>@player.Shots</td>
+                                            <td>@(player.ShootingPctg.ToString("P1"))</td>
+                                            <td class="toi-col">@player.AvgToi</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Goalies Table -->
+                    @if (_clubStats.Goalies.Count > 0)
+                    {
+                        <div class="card mt-3">
+                            <div class="card-header">
+                                <h3 class="card-title">Goalies</h3>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table player-stats-table roster-table goalie-table">
+                                    <thead>
+                                        <tr>
+                                            <th class="player-col">Player</th>
+                                            <th>GP</th>
+                                            <th>W</th>
+                                            <th>L</th>
+                                            <th>OTL</th>
+                                            <th>SV%</th>
+                                            <th>GAA</th>
+                                            <th>SO</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var goalie in _clubStats.Goalies.OrderByDescending(g => g.Wins))
+                                        {
+                                            <tr class="clickable-row" @onclick="() => NavigateToPlayer(goalie.PlayerId)">
+                                                <td class="player-col">
+                                                    <img src="@goalie.Headshot" alt="" class="player-headshot-sm" onerror="this.src='/images/default-player.png'" />
+                                                    <span class="player-name">@goalie.FullName</span>
+                                                </td>
+                                                <td>@goalie.GamesPlayed</td>
+                                                <td class="stat-highlight">@goalie.Wins</td>
+                                                <td>@goalie.Losses</td>
+                                                <td>@goalie.OtLosses</td>
+                                                <td class="@GetSavePctClass(goalie.SavePctg)">@FormatSavePct(goalie.SavePctg)</td>
+                                                <td class="@GetGaaClass(goalie.GoalsAgainstAvg)">@goalie.GoalsAgainstAvg.ToString("F2")</td>
+                                                <td>@goalie.Shutouts</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="card">
+                        <p class="text-muted text-center p-4">Roster not available.</p>
+                    </div>
+                }
+            }
+            else if (_activeTab == "schedule")
+            {
+                @if (_schedule?.Games != null)
+                {
+                    <!-- Schedule Filters -->
+                    <div class="filter-bar mb-3">
+                        <button class="filter-btn @(_scheduleFilter == "all" ? "active" : "")" @onclick='() => _scheduleFilter = "all"'>
+                            All (@_schedule.Games.Count)
+                        </button>
+                        <button class="filter-btn @(_scheduleFilter == "upcoming" ? "active" : "")" @onclick='() => _scheduleFilter = "upcoming"'>
+                            Upcoming (@_schedule.Games.Count(g => g.GameState == "FUT"))
+                        </button>
+                        <button class="filter-btn @(_scheduleFilter == "completed" ? "active" : "")" @onclick='() => _scheduleFilter = "completed"'>
+                            Completed (@_schedule.Games.Count(g => g.GameState is "FINAL" or "OFF"))
+                        </button>
+                    </div>
+
+                    <div class="schedule-list">
+                        @foreach (var game in GetFilteredSchedule())
+                        {
+                            var isHome = game.HomeTeam.Abbrev == TeamAbbrev;
+                            var opponent = isHome ? game.AwayTeam : game.HomeTeam;
+                            var isCompleted = game.GameState is "FINAL" or "OFF";
+                            var isWin = isCompleted && ((isHome && game.HomeTeam.Score > game.AwayTeam.Score) ||
+                                        (!isHome && game.AwayTeam.Score > game.HomeTeam.Score));
+                            var isLoss = isCompleted && !isWin;
+
+                            <a href="/game/@game.Id" class="schedule-item @(isCompleted ? (isWin ? "win" : "loss") : "")">
+                                <div class="schedule-date">
+                                    <span class="month">@ParseDate(game.GameDate).ToString("MMM")</span>
+                                    <span class="day">@ParseDate(game.GameDate).ToString("dd")</span>
+                                </div>
+                                <div class="schedule-opponent">
+                                    <img src="@TeamLogoHelper.GetLogoUrl(opponent.Abbrev)" alt="@opponent.Abbrev" class="team-logo-sm" />
+                                    <span class="opponent-name">@(isHome ? "vs" : "@") @opponent.Abbrev</span>
+                                </div>
+                                <div class="schedule-result">
+                                    @if (isCompleted)
+                                    {
+                                        <span class="result-badge @(isWin ? "win" : "loss")">@(isWin ? "W" : "L")</span>
+                                        <span class="score">@game.AwayTeam.Score - @game.HomeTeam.Score</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="game-time">@game.StartTimeUtc.ToLocalTime().ToString("h:mm tt")</span>
+                                    }
+                                </div>
+                            </a>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <div class="card">
+                        <p class="text-muted text-center p-4">Schedule not available.</p>
+                    </div>
+                }
+            }
+            else if (_activeTab == "standings")
+            {
+                @if (_standings != null && _standing != null)
+                {
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--spacing-lg);">
+                        <!-- Division Standings -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 class="card-title">@_standing.DivisionName Division</h3>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table standings-table">
+                                    <thead>
+                                        <tr>
+                                            <th class="rank-col">#</th>
+                                            <th class="team-col">Team</th>
+                                            <th>GP</th>
+                                            <th>W</th>
+                                            <th>L</th>
+                                            <th>OTL</th>
+                                            <th class="points-col">PTS</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @{
+                                            var divisionTeams = _standings.Standings
+                                                .Where(t => t.DivisionName == _standing.DivisionName)
+                                                .OrderByDescending(t => t.Points)
+                                                .ThenByDescending(t => t.PointPctg)
+                                                .ToList();
+                                        }
+                                        @foreach (var (team, index) in divisionTeams.Select((t, i) => (t, i + 1)))
+                                        {
+                                            var isCurrentTeam = team.TeamAbbrev.Default == TeamAbbrev;
+                                            <tr class="@(isCurrentTeam ? "current-team" : "")">
+                                                <td class="rank-col">@index</td>
+                                                <td class="team-col">
+                                                    <a href="/team/@team.TeamAbbrev.Default" style="display: flex; align-items: center; gap: var(--spacing-sm); text-decoration: none; color: inherit;">
+                                                        <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="" class="team-logo-xs" />
+                                                        <span class="@(isCurrentTeam ? "font-bold" : "")">@team.TeamAbbrev.Default</span>
+                                                    </a>
+                                                </td>
+                                                <td>@team.GamesPlayed</td>
+                                                <td>@team.Wins</td>
+                                                <td>@team.Losses</td>
+                                                <td>@team.OtLosses</td>
+                                                <td class="points-col"><strong>@team.Points</strong></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Conference Standings -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h3 class="card-title">@_standing.ConferenceName Conference</h3>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table standings-table">
+                                    <thead>
+                                        <tr>
+                                            <th class="rank-col">#</th>
+                                            <th class="team-col">Team</th>
+                                            <th>GP</th>
+                                            <th>W</th>
+                                            <th>L</th>
+                                            <th>OTL</th>
+                                            <th class="points-col">PTS</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @{
+                                            var confTeams = _standings.Standings
+                                                .Where(t => t.ConferenceName == _standing.ConferenceName)
+                                                .OrderByDescending(t => t.Points)
+                                                .ThenByDescending(t => t.PointPctg)
+                                                .ToList();
+                                        }
+                                        @foreach (var (team, index) in confTeams.Select((t, i) => (t, i + 1)))
+                                        {
+                                            var isCurrentTeam = team.TeamAbbrev.Default == TeamAbbrev;
+                                            var isPlayoffSpot = index <= 8;
+                                            <tr class="@(isCurrentTeam ? "current-team" : "") @(index == 8 ? "playoff-line" : "")">
+                                                <td class="rank-col">@index</td>
+                                                <td class="team-col">
+                                                    <a href="/team/@team.TeamAbbrev.Default" style="display: flex; align-items: center; gap: var(--spacing-sm); text-decoration: none; color: inherit;">
+                                                        <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="" class="team-logo-xs" />
+                                                        <span class="@(isCurrentTeam ? "font-bold" : "")">@team.TeamAbbrev.Default</span>
+                                                    </a>
+                                                </td>
+                                                <td>@team.GamesPlayed</td>
+                                                <td>@team.Wins</td>
+                                                <td>@team.Losses</td>
+                                                <td>@team.OtLosses</td>
+                                                <td class="points-col"><strong>@team.Points</strong></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Wild Card Race -->
+                    <div class="card mt-3">
+                        <div class="card-header">
+                            <h3 class="card-title">Wild Card Race - @_standing.ConferenceName</h3>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table standings-table">
+                                <thead>
+                                    <tr>
+                                        <th class="team-col">Team</th>
+                                        <th>DIV</th>
+                                        <th>GP</th>
+                                        <th>W</th>
+                                        <th>L</th>
+                                        <th>OTL</th>
+                                        <th class="points-col">PTS</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @{
+                                        var wcConfTeams = _standings.Standings
+                                            .Where(t => t.ConferenceName == _standing.ConferenceName)
+                                            .ToList();
+
+                                        var divisions = wcConfTeams.GroupBy(t => t.DivisionName).ToList();
+
+                                        // Top 3 from each division
+                                        var divQualifiers = divisions
+                                            .SelectMany(d => d.OrderByDescending(t => t.Points).ThenByDescending(t => t.PointPctg).Take(3))
+                                            .ToList();
+
+                                        // Remaining teams for wild card
+                                        var wcCandidates = wcConfTeams
+                                            .Except(divQualifiers)
+                                            .OrderByDescending(t => t.Points)
+                                            .ThenByDescending(t => t.PointPctg)
+                                            .ToList();
+
+                                        var wcCutoff = wcCandidates.Skip(1).FirstOrDefault()?.Points ?? 0;
+                                    }
+                                    @foreach (var (team, index) in wcCandidates.Take(6).Select((t, i) => (t, i)))
+                                    {
+                                        var isCurrentTeam = team.TeamAbbrev.Default == TeamAbbrev;
+                                        var isWildCard = index < 2;
+                                        var pointsBack = isWildCard ? 0 : wcCutoff - team.Points;
+                                        <tr class="@(isCurrentTeam ? "current-team" : "") @(index == 1 ? "playoff-line" : "")">
+                                            <td class="team-col">
+                                                <a href="/team/@team.TeamAbbrev.Default" style="display: flex; align-items: center; gap: var(--spacing-sm); text-decoration: none; color: inherit;">
+                                                    <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="" class="team-logo-xs" />
+                                                    <span class="@(isCurrentTeam ? "font-bold" : "")">@team.TeamAbbrev.Default</span>
+                                                </a>
+                                            </td>
+                                            <td>@team.DivisionAbbrev</td>
+                                            <td>@team.GamesPlayed</td>
+                                            <td>@team.Wins</td>
+                                            <td>@team.Losses</td>
+                                            <td>@team.OtLosses</td>
+                                            <td class="points-col"><strong>@team.Points</strong></td>
+                                            <td>
+                                                @if (isWildCard)
+                                                {
+                                                    <span class="status-badge in">WC@(index + 1)</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-muted">@pointsBack back</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="card">
+                        <p class="text-muted text-center p-4">Standings not available.</p>
+                    </div>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string TeamAbbrev { get; set; } = string.Empty;
+
+    private bool _isLoading = true;
+    private string _activeTab = "roster";
+    private string _scheduleFilter = "all";
+    private ClubStatsResponse? _clubStats;
+    private ScheduleResponse? _schedule;
+    private TeamStanding? _standing;
+    private Models.Domain.FavoriteTeam? _favoriteTeam;
+    private StandingsResponse? _standings;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var season = NhlApiClient.GetCurrentSeason();
+            _favoriteTeam = await TeamService.GetFavoriteTeamAsync();
+
+            var statsTask = NhlApiClient.GetClubStatsAsync(TeamAbbrev);
+            var scheduleTask = NhlApiClient.GetSeasonScheduleAsync(TeamAbbrev, season);
+            var standingsTask = NhlApiClient.GetStandingsAsync();
+
+            await Task.WhenAll(statsTask, scheduleTask, standingsTask);
+
+            _clubStats = statsTask.Result;
+            _schedule = scheduleTask.Result;
+            _standings = standingsTask.Result;
+            _standing = _standings?.Standings.FirstOrDefault(s => s.TeamAbbrev.Default == TeamAbbrev);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void NavigateToPlayer(int playerId)
+    {
+        Navigation.NavigateTo($"/player/{playerId}");
+    }
+
+    private async Task SetAsFavorite()
+    {
+        await TeamService.SetFavoriteTeamAsync(
+            TeamAbbrev,
+            TeamLogoHelper.GetTeamName(TeamAbbrev),
+            TeamLogoHelper.GetLogoUrl(TeamAbbrev),
+            null,
+            null);
+        _favoriteTeam = await TeamService.GetFavoriteTeamAsync();
+        StateHasChanged();
+    }
+
+    private static DateTime ParseDate(string dateStr)
+    {
+        if (DateTime.TryParse(dateStr, out var date))
+            return date;
+        return DateTime.MinValue;
+    }
+
+    private string GetStandingRank()
+    {
+        if (_standing == null) return "";
+        return $"{_standing.DivisionName} #{_standing.DivisionSequence} | {_standing.ConferenceName} #{_standing.ConferenceSequence}";
+    }
+
+    private IEnumerable<ScheduleGame> GetFilteredSchedule()
+    {
+        if (_schedule?.Games == null) return Enumerable.Empty<ScheduleGame>();
+
+        var games = _scheduleFilter switch
+        {
+            "upcoming" => _schedule.Games.Where(g => g.GameState == "FUT").OrderBy(g => g.GameDate),
+            "completed" => _schedule.Games.Where(g => g.GameState is "FINAL" or "OFF").OrderByDescending(g => g.GameDate),
+            _ => _schedule.Games.OrderBy(g => g.GameDate)
+        };
+
+        return games;
+    }
+
+    private static string GetDiffClass(int diff) => diff switch { > 0 => "diff-positive", < 0 => "diff-negative", _ => "" };
+    private static string FormatDiff(int diff) => diff > 0 ? $"+{diff}" : diff.ToString();
+    private static string GetStreakClass(string? code) => code switch { "W" => "streak-win", "L" => "streak-loss", _ => "" };
+    private static string FormatPlusMinus(int pm) => pm > 0 ? $"+{pm}" : pm.ToString();
+    private static string GetPlusMinusClass(int pm) => pm switch { > 0 => "stat-positive", < 0 => "stat-negative", _ => "" };
+    private static string FormatSavePct(double pct) => $".{(pct * 1000):000}";
+    private static string GetSavePctClass(double pct) => pct switch { >= 0.920 => "stat-highlight", < 0.880 => "stat-negative", _ => "" };
+    private static string GetGaaClass(double gaa) => gaa switch { <= 2.50 => "stat-highlight", >= 3.50 => "stat-negative", _ => "" };
+}

@@ -1,0 +1,89 @@
+@using PuckDrop.Models.Api
+
+<div class="penalty-summary">
+    <div class="section-header">
+        <h3>Penalties</h3>
+        @if (TotalPenalties > 0)
+        {
+            <span class="penalty-count">@TotalPenalties total (@TotalPIM PIM)</span>
+        }
+    </div>
+
+    @if (Penalties == null || !Penalties.Any(p => p.Penalties?.Count > 0))
+    {
+        <div class="empty-state-sm">
+            <span class="text-muted">No penalties</span>
+        </div>
+    }
+    else
+    {
+        @foreach (var period in Penalties.Where(p => p.Penalties != null && p.Penalties.Count > 0))
+        {
+            <div class="period-penalties">
+                <div class="period-header">
+                    <span class="period-label">@GetPeriodName(period.PeriodDescriptor)</span>
+                </div>
+                @foreach (var penalty in period.Penalties!)
+                {
+                    var isHomeTeam = penalty.TeamAbbrev?.Default == HomeTeamAbbrev;
+                    <div class="penalty-item @(isHomeTeam ? "home" : "away")">
+                        <div class="penalty-team">
+                            <span class="team-abbrev">@penalty.TeamAbbrev?.Default</span>
+                        </div>
+                        <div class="penalty-info">
+                            <div class="penalty-player">@penalty.CommittedByPlayer?.FullName</div>
+                            <div class="penalty-type">
+                                @FormatPenaltyType(penalty.DescKey)
+                                <span class="penalty-minutes">(@penalty.Duration min)</span>
+                            </div>
+                            @if (!string.IsNullOrEmpty(penalty.DrawnBy?.FullName))
+                            {
+                                <div class="penalty-drawn">Drawn by: @penalty.DrawnBy?.FullName</div>
+                            }
+                        </div>
+                        <div class="penalty-time">@penalty.TimeInPeriod</div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public List<PeriodPenalties>? Penalties { get; set; }
+
+    [Parameter]
+    public string? HomeTeamAbbrev { get; set; }
+
+    [Parameter]
+    public string? AwayTeamAbbrev { get; set; }
+
+    private int TotalPenalties => Penalties?.Sum(p => p.Penalties?.Count ?? 0) ?? 0;
+
+    private int TotalPIM => Penalties?.Sum(p => p.Penalties?.Sum(pen => pen.Duration) ?? 0) ?? 0;
+
+    private static string GetPeriodName(PeriodDescriptor period)
+    {
+        return period.PeriodType switch
+        {
+            "OT" => "Overtime",
+            _ => period.Number switch
+            {
+                1 => "1st Period",
+                2 => "2nd Period",
+                3 => "3rd Period",
+                _ => $"Period {period.Number}"
+            }
+        };
+    }
+
+    private static string FormatPenaltyType(string? descKey)
+    {
+        if (string.IsNullOrEmpty(descKey)) return "Penalty";
+
+        // Convert kebab-case to Title Case
+        return string.Join(" ", descKey.Split('-')
+            .Select(word => char.ToUpper(word[0]) + word[1..].ToLower()));
+    }
+}

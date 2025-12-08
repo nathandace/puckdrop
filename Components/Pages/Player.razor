@@ -1,0 +1,515 @@
+@page "/player/{PlayerId:int}"
+@using PuckDrop.Models.Api
+@using PuckDrop.Services
+@inject INhlApiClient NhlApiClient
+@inject NavigationManager Navigation
+@rendermode InteractiveServer
+
+<PageTitle>NHL Monitor - @(_player?.FullName ?? "Player")</PageTitle>
+
+<div class="player-page">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="spinner"></div>
+        </div>
+    }
+    else if (_player == null)
+    {
+        <div class="card">
+            <p class="text-muted text-center p-4">Player not found.</p>
+            <div class="text-center">
+                <button class="btn btn-secondary" @onclick="GoBack">Go Back</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <!-- Breadcrumb Navigation -->
+        <nav class="breadcrumb">
+            @if (!string.IsNullOrEmpty(_player.CurrentTeamAbbrev))
+            {
+                <a href="/team/@_player.CurrentTeamAbbrev" class="breadcrumb-link">
+                    <img src="@TeamLogoHelper.GetLogoUrl(_player.CurrentTeamAbbrev)" alt="" class="team-logo-xs" />
+                    @_player.FullTeamName?.Default
+                </a>
+                <span class="breadcrumb-separator">/</span>
+            }
+            <span class="breadcrumb-current">@_player.FullName</span>
+        </nav>
+
+        <!-- Player Header -->
+        <div class="player-header">
+            <div class="player-photo-container">
+                <img src="@_player.Headshot" alt="@_player.FullName" class="player-photo" onerror="this.src='/images/default-player.png'" />
+                @if (!string.IsNullOrEmpty(_player.CurrentTeamAbbrev))
+                {
+                    <img src="@TeamLogoHelper.GetLogoUrl(_player.CurrentTeamAbbrev)" alt="" class="player-team-logo" />
+                }
+            </div>
+            <div class="player-info">
+                <div class="player-name-section">
+                    @if (_player.SweaterNumber.HasValue)
+                    {
+                        <span class="player-number">#@_player.SweaterNumber</span>
+                    }
+                    <h1 class="player-name">@_player.FullName</h1>
+                </div>
+                <div class="player-details">
+                    <span class="player-position-badge">@_player.Position</span>
+                    @if (!string.IsNullOrEmpty(_player.CurrentTeamAbbrev))
+                    {
+                        <a href="/team/@_player.CurrentTeamAbbrev" class="player-team-link">
+                            @_player.FullTeamName?.Default
+                        </a>
+                    }
+                </div>
+                <div class="player-bio">
+                    @if (_player.HeightInInches.HasValue)
+                    {
+                        <span>@FormatHeight(_player.HeightInInches.Value)</span>
+                    }
+                    @if (_player.WeightInPounds.HasValue)
+                    {
+                        <span>@_player.WeightInPounds lbs</span>
+                    }
+                    @if (_player.Age.HasValue)
+                    {
+                        <span>Age @_player.Age</span>
+                    }
+                    @if (!string.IsNullOrEmpty(_player.ShootsCatches))
+                    {
+                        <span>@(_player.Position == "G" ? "Catches" : "Shoots"): @_player.ShootsCatches</span>
+                    }
+                </div>
+                @if (!string.IsNullOrEmpty(_player.BirthCity?.Default) || !string.IsNullOrEmpty(_player.BirthCountry))
+                {
+                    <div class="player-birthplace">
+                        Born: @GetBirthplace()
+                        @if (!string.IsNullOrEmpty(_player.BirthDate))
+                        {
+                            <span>(@FormatBirthDate(_player.BirthDate))</span>
+                        }
+                    </div>
+                }
+                @if (_player.DraftDetails != null)
+                {
+                    <div class="player-draft">
+                        Draft: @_player.DraftDetails.Year Round @_player.DraftDetails.Round, Pick @_player.DraftDetails.OverallPick (@_player.DraftDetails.TeamAbbrev)
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Current Season Stats -->
+        @if (_player.FeaturedStats?.RegularSeason?.SubSeason != null)
+        {
+            var stats = _player.FeaturedStats.RegularSeason.SubSeason;
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">@FormatSeason(_player.FeaturedStats.Season) Season</h3>
+                </div>
+                @if (_player.Position == "G")
+                {
+                    <div class="stats-highlight-grid">
+                        <div class="stat-box">
+                            <span class="stat-value">@stats.GamesPlayed</span>
+                            <span class="stat-label">GP</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-value">@stats.Wins</span>
+                            <span class="stat-label">W</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-value">@stats.Losses</span>
+                            <span class="stat-label">L</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-value">@stats.OtLosses</span>
+                            <span class="stat-label">OTL</span>
+                        </div>
+                        <div class="stat-box highlight">
+                            <span class="stat-value">@FormatSavePct(stats.SavePctg)</span>
+                            <span class="stat-label">SV%</span>
+                        </div>
+                        <div class="stat-box highlight">
+                            <span class="stat-value">@stats.GoalsAgainstAvg?.ToString("F2")</span>
+                            <span class="stat-label">GAA</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-value">@stats.Shutouts</span>
+                            <span class="stat-label">SO</span>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="stats-highlight-grid">
+                        <div class="stat-box">
+                            <span class="stat-value">@stats.GamesPlayed</span>
+                            <span class="stat-label">GP</span>
+                        </div>
+                        <div class="stat-box highlight">
+                            <span class="stat-value">@stats.Goals</span>
+                            <span class="stat-label">G</span>
+                        </div>
+                        <div class="stat-box highlight">
+                            <span class="stat-value">@stats.Assists</span>
+                            <span class="stat-label">A</span>
+                        </div>
+                        <div class="stat-box highlight">
+                            <span class="stat-value">@stats.Points</span>
+                            <span class="stat-label">PTS</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-value @GetPlusMinusClass(stats.PlusMinus)">@FormatPlusMinus(stats.PlusMinus)</span>
+                            <span class="stat-label">+/-</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-value">@stats.Pim</span>
+                            <span class="stat-label">PIM</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-value">@stats.PowerPlayGoals</span>
+                            <span class="stat-label">PPG</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-value">@stats.Shots</span>
+                            <span class="stat-label">SOG</span>
+                        </div>
+                        <div class="stat-box">
+                            <span class="stat-value">@((stats.ShootingPctg * 100).ToString("F1"))%</span>
+                            <span class="stat-label">S%</span>
+                        </div>
+                        @if (!string.IsNullOrEmpty(stats.AvgToi))
+                        {
+                            <div class="stat-box">
+                                <span class="stat-value">@stats.AvgToi</span>
+                                <span class="stat-label">TOI</span>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        <!-- Last 5 Games -->
+        @if (_player.Last5Games?.Count > 0)
+        {
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h3 class="card-title">Last 5 Games</h3>
+                </div>
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Opp</th>
+                                @if (_player.Position == "G")
+                                {
+                                    <th>Result</th>
+                                    <th>SA</th>
+                                    <th>SV</th>
+                                    <th>GA</th>
+                                    <th>SV%</th>
+                                }
+                                else
+                                {
+                                    <th>G</th>
+                                    <th>A</th>
+                                    <th>PTS</th>
+                                    <th>+/-</th>
+                                    <th>SOG</th>
+                                    <th>TOI</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var game in _player.Last5Games)
+                            {
+                                <tr class="clickable-row" @onclick="() => NavigateToGame(game.GameId)">
+                                    <td>@FormatGameDate(game.GameDate)</td>
+                                    <td>
+                                        <span class="text-muted">@game.HomeRoadFlag</span>
+                                        @game.OpponentAbbrev
+                                    </td>
+                                    @if (_player.Position == "G")
+                                    {
+                                        <td>-</td>
+                                        <td>-</td>
+                                        <td>-</td>
+                                        <td>-</td>
+                                        <td>-</td>
+                                    }
+                                    else
+                                    {
+                                        <td class="@(game.Goals > 0 ? "stat-highlight" : "")">@game.Goals</td>
+                                        <td class="@(game.Assists > 0 ? "stat-highlight" : "")">@game.Assists</td>
+                                        <td class="@(game.Points > 0 ? "stat-highlight" : "")"><strong>@game.Points</strong></td>
+                                        <td class="@GetPlusMinusClass(game.PlusMinus)">@FormatPlusMinus(game.PlusMinus)</td>
+                                        <td>@game.Shots</td>
+                                        <td>@game.Toi</td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+
+        <!-- Career Stats -->
+        @if (_player.CareerTotals?.RegularSeason != null)
+        {
+            var career = _player.CareerTotals.RegularSeason;
+            var playoffs = _player.CareerTotals.Playoffs;
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h3 class="card-title">Career Totals</h3>
+                </div>
+                <div class="table-responsive">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Type</th>
+                                <th>GP</th>
+                                @if (_player.Position == "G")
+                                {
+                                    <th>W</th>
+                                    <th>L</th>
+                                    <th>SV%</th>
+                                    <th>GAA</th>
+                                    <th>SO</th>
+                                }
+                                else
+                                {
+                                    <th>G</th>
+                                    <th>A</th>
+                                    <th>PTS</th>
+                                    <th>+/-</th>
+                                    <th>PIM</th>
+                                    <th>PPG</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Regular Season</strong></td>
+                                <td>@career.GamesPlayed</td>
+                                @if (_player.Position == "G")
+                                {
+                                    <td>@career.Wins</td>
+                                    <td>@career.Losses</td>
+                                    <td>@FormatSavePct(career.SavePctg)</td>
+                                    <td>@career.GoalsAgainstAvg?.ToString("F2")</td>
+                                    <td>@career.Shutouts</td>
+                                }
+                                else
+                                {
+                                    <td class="stat-highlight">@career.Goals</td>
+                                    <td class="stat-highlight">@career.Assists</td>
+                                    <td class="stat-highlight"><strong>@career.Points</strong></td>
+                                    <td class="@GetPlusMinusClass(career.PlusMinus)">@FormatPlusMinus(career.PlusMinus)</td>
+                                    <td>@career.Pim</td>
+                                    <td>@career.PowerPlayGoals</td>
+                                }
+                            </tr>
+                            @if (playoffs != null && playoffs.GamesPlayed > 0)
+                            {
+                                <tr>
+                                    <td><strong>Playoffs</strong></td>
+                                    <td>@playoffs.GamesPlayed</td>
+                                    @if (_player.Position == "G")
+                                    {
+                                        <td>@playoffs.Wins</td>
+                                        <td>@playoffs.Losses</td>
+                                        <td>@FormatSavePct(playoffs.SavePctg)</td>
+                                        <td>@playoffs.GoalsAgainstAvg?.ToString("F2")</td>
+                                        <td>@playoffs.Shutouts</td>
+                                    }
+                                    else
+                                    {
+                                        <td>@playoffs.Goals</td>
+                                        <td>@playoffs.Assists</td>
+                                        <td><strong>@playoffs.Points</strong></td>
+                                        <td class="@GetPlusMinusClass(playoffs.PlusMinus)">@FormatPlusMinus(playoffs.PlusMinus)</td>
+                                        <td>@playoffs.Pim</td>
+                                        <td>@playoffs.PowerPlayGoals</td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+
+        <!-- Season by Season -->
+        @if (_player.SeasonTotals?.Count > 0)
+        {
+            var nhlSeasons = _player.SeasonTotals
+                .Where(s => s.LeagueAbbrev == "NHL" && s.GameTypeId == 2)
+                .OrderByDescending(s => s.Season)
+                .ToList();
+
+            if (nhlSeasons.Count > 0)
+            {
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h3 class="card-title">Season by Season (NHL)</h3>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Season</th>
+                                    <th>Team</th>
+                                    <th>GP</th>
+                                    @if (_player.Position != "G")
+                                    {
+                                        <th>G</th>
+                                        <th>A</th>
+                                        <th>PTS</th>
+                                        <th>+/-</th>
+                                        <th>PIM</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var season in nhlSeasons)
+                                {
+                                    <tr>
+                                        <td>@FormatSeason(season.Season)</td>
+                                        <td>@season.TeamName?.Default</td>
+                                        <td>@season.GamesPlayed</td>
+                                        @if (_player.Position != "G")
+                                        {
+                                            <td>@season.Goals</td>
+                                            <td>@season.Assists</td>
+                                            <td><strong>@season.Points</strong></td>
+                                            <td class="@GetPlusMinusClass(season.PlusMinus ?? 0)">@FormatPlusMinus(season.PlusMinus ?? 0)</td>
+                                            <td>@season.Pim</td>
+                                        }
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        }
+
+        <!-- Awards -->
+        @if (_player.Awards?.Count > 0)
+        {
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h3 class="card-title">Awards</h3>
+                </div>
+                <div class="awards-list">
+                    @foreach (var award in _player.Awards)
+                    {
+                        <div class="award-item">
+                            <span class="award-name">@award.Trophy.Default</span>
+                            @if (award.Seasons?.Count > 0)
+                            {
+                                <span class="award-seasons">
+                                    @string.Join(", ", award.Seasons.Select(s => FormatSeason(s.SeasonId)))
+                                </span>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter]
+    public int PlayerId { get; set; }
+
+    private bool _isLoading = true;
+    private PlayerLandingResponse? _player;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            _player = await NhlApiClient.GetPlayerLandingAsync(PlayerId);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void GoBack()
+    {
+        Navigation.NavigateTo("javascript:history.back()");
+    }
+
+    private void NavigateToGame(int gameId)
+    {
+        Navigation.NavigateTo($"/game/{gameId}");
+    }
+
+    private string GetBirthplace()
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrEmpty(_player?.BirthCity?.Default))
+            parts.Add(_player.BirthCity.Default);
+        if (!string.IsNullOrEmpty(_player?.BirthStateProvince?.Default))
+            parts.Add(_player.BirthStateProvince.Default);
+        if (!string.IsNullOrEmpty(_player?.BirthCountry))
+            parts.Add(_player.BirthCountry);
+        return string.Join(", ", parts);
+    }
+
+    private static string FormatHeight(int inches)
+    {
+        var feet = inches / 12;
+        var remainingInches = inches % 12;
+        return $"{feet}'{remainingInches}\"";
+    }
+
+    private static string FormatBirthDate(string dateStr)
+    {
+        if (DateTime.TryParse(dateStr, out var date))
+            return date.ToString("MMMM d, yyyy");
+        return dateStr;
+    }
+
+    private static string FormatGameDate(string dateStr)
+    {
+        if (DateTime.TryParse(dateStr, out var date))
+            return date.ToString("MMM d");
+        return dateStr;
+    }
+
+    private static string FormatSeason(int season)
+    {
+        var startYear = season / 10000;
+        var endYear = season % 10000;
+        return $"{startYear}-{endYear.ToString().Substring(2)}";
+    }
+
+    private static string FormatPlusMinus(int pm) => pm > 0 ? $"+{pm}" : pm.ToString();
+    private static string GetPlusMinusClass(int pm) => pm switch { > 0 => "stat-positive", < 0 => "stat-negative", _ => "" };
+    private static string FormatSavePct(double? pct) => pct.HasValue ? $".{(pct.Value * 1000):000}" : "-";
+}

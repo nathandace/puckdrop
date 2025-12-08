@@ -1,0 +1,79 @@
+@using PuckDrop.Models.Api
+@inject NavigationManager Navigation
+
+@if (Stars != null && Stars.Count > 0)
+{
+    <div class="three-stars">
+        <div class="section-header">
+            <h3>Three Stars</h3>
+        </div>
+        <div class="stars-container">
+            @foreach (var star in Stars.OrderBy(s => s.Star))
+            {
+                <div class="star-card star-@star.Star clickable-card" @onclick="() => NavigateToPlayer(star.PlayerId)">
+                    <div class="star-badge">
+                        @GetStarDisplay(star.Star)
+                    </div>
+                    <div class="star-player">
+                        @if (!string.IsNullOrEmpty(star.Headshot))
+                        {
+                            <img src="@star.Headshot" alt="@star.Name?.Default" class="star-headshot" />
+                        }
+                        else
+                        {
+                            <div class="star-headshot-placeholder">
+                                <span>@star.Position</span>
+                            </div>
+                        }
+                        <div class="star-info">
+                            <span class="star-name">@star.Name?.Default</span>
+                            <span class="star-team">@star.TeamAbbrev</span>
+                        </div>
+                    </div>
+                    <div class="star-stats">
+                        @if (star.Position == "G")
+                        {
+                            <span class="stat-item">Goalie</span>
+                        }
+                        else
+                        {
+                            @if (star.Goals > 0)
+                            {
+                                <span class="stat-item goals">@star.Goals G</span>
+                            }
+                            @if (star.Assists > 0)
+                            {
+                                <span class="stat-item assists">@star.Assists A</span>
+                            }
+                            @if (star.Points > 0)
+                            {
+                                <span class="stat-item points">@star.Points PTS</span>
+                            }
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public List<ThreeStar>? Stars { get; set; }
+
+    private void NavigateToPlayer(int playerId)
+    {
+        Navigation.NavigateTo($"/player/{playerId}");
+    }
+
+    private static string GetStarDisplay(int star)
+    {
+        return star switch
+        {
+            1 => "1st",
+            2 => "2nd",
+            3 => "3rd",
+            _ => $"{star}th"
+        };
+    }
+}
