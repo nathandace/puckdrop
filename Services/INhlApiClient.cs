@@ -84,6 +84,12 @@ public interface INhlApiClient
     void InvalidateLiveGameCache(int gameId);
 
     /// <summary>
+    /// Invalidates cached schedule data for a team.
+    /// </summary>
+    /// <param name="teamAbbrev">The team abbreviation.</param>
+    void InvalidateScheduleCache(string teamAbbrev);
+
+    /// <summary>
     /// Gets today's scoreboard with all games and scores.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>

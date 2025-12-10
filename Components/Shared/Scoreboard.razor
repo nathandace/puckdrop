@@ -21,7 +21,16 @@
                 <span class="score-home">@(HomeTeam?.Score ?? 0)</span>
             </div>
 
-            @if (Clock != null && PeriodDescriptor != null)
+            @if (GameState == "FINAL" || GameState == "OFF")
+            {
+                <div class="period-display">FINAL@(GetOvertimeIndicator())</div>
+            }
+            else if (GameState == "FUT" || GameState == "PRE")
+            {
+                <div class="period-display">@StartTime.ToLocalTime().ToString("h:mm tt")</div>
+                <div class="text-muted">@StartTime.ToLocalTime().ToString("MMM d, yyyy")</div>
+            }
+            else if (Clock != null && PeriodDescriptor != null)
             {
                 <div class="period-display">
                     @GetPeriodText(PeriodDescriptor)
@@ -34,15 +43,6 @@
                 {
                     <div class="time-display text-muted">Intermission</div>
                 }
-            }
-            else if (GameState == "FUT" || GameState == "PRE")
-            {
-                <div class="period-display">@StartTime.ToLocalTime().ToString("h:mm tt")</div>
-                <div class="text-muted">@StartTime.ToLocalTime().ToString("MMM d, yyyy")</div>
-            }
-            else if (GameState == "FINAL" || GameState == "OFF")
-            {
-                <div class="period-display">FINAL@GetOvertimeIndicator()</div>
             }
         </div>
 

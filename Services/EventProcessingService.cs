@@ -87,19 +87,44 @@ public class EventProcessingService : IEventProcessingService
                 continue;
             }
 
-            // Get rules from pre-fetched dictionaries
-            var enabledRules = new List<WebhookRule>();
-            if (homeRulesByType.TryGetValue(webhookEventType.Value, out var homeRules))
-            {
-                enabledRules.AddRange(homeRules);
-            }
-            if (awayRulesByType.TryGetValue(webhookEventType.Value, out var awayRules))
-            {
-                enabledRules.AddRange(awayRules);
-            }
-
             // Track event for batch marking
             eventsToMark.Add((eventId, webhookEventType.Value));
+
+            // For team-specific events (goals, penalties), only fire for the team that owns the event
+            var eventOwnerTeamAbbrev = play.Details?.EventOwnerTeamId != null
+                ? GetTeamAbbrevFromId(play.Details.EventOwnerTeamId, playByPlay)
+                : null;
+
+            // Get rules from pre-fetched dictionaries
+            var enabledRules = new List<WebhookRule>();
+
+            // For GoalScored and PenaltyCommitted, only get rules for the team that owns the event
+            if (webhookEventType.Value is WebhookEventType.GoalScored or WebhookEventType.PenaltyCommitted
+                && eventOwnerTeamAbbrev != null)
+            {
+                if (eventOwnerTeamAbbrev == landing.HomeTeam.Abbrev
+                    && homeRulesByType.TryGetValue(webhookEventType.Value, out var homeRules))
+                {
+                    enabledRules.AddRange(homeRules);
+                }
+                else if (eventOwnerTeamAbbrev == landing.AwayTeam.Abbrev
+                    && awayRulesByType.TryGetValue(webhookEventType.Value, out var awayRules))
+                {
+                    enabledRules.AddRange(awayRules);
+                }
+            }
+            else
+            {
+                // For other events (period start/end, game start/end), fire for both teams
+                if (homeRulesByType.TryGetValue(webhookEventType.Value, out var homeRules))
+                {
+                    enabledRules.AddRange(homeRules);
+                }
+                if (awayRulesByType.TryGetValue(webhookEventType.Value, out var awayRules))
+                {
+                    enabledRules.AddRange(awayRules);
+                }
+            }
 
             // Send standard webhooks
             if (enabledRules.Count > 0)
@@ -123,48 +148,6 @@ public class EventProcessingService : IEventProcessingService
                         _logger.LogError(ex,
                             "Failed to send webhook for {EventType} in game {GameId}",
                             webhookEventType.Value, gameId);
-                    }
-                }
-            }
-
-            // For goals, also check for FavoriteTeamGoal and OpponentGoal rules
-            if (webhookEventType.Value == WebhookEventType.GoalScored && play.Details?.EventOwnerTeamId != null)
-            {
-                var scoringTeamAbbrev = GetTeamAbbrevFromId(play.Details.EventOwnerTeamId, playByPlay);
-
-                // For each team, determine if this is their goal or opponent's goal
-                foreach (var (teamAbbrev, rulesByType) in new[] {
-                    (landing.HomeTeam.Abbrev, homeRulesByType),
-                    (landing.AwayTeam.Abbrev, awayRulesByType) })
-                {
-                    var isTeamGoal = scoringTeamAbbrev == teamAbbrev;
-                    var specialEventType = isTeamGoal
-                        ? WebhookEventType.FavoriteTeamGoal
-                        : WebhookEventType.OpponentGoal;
-
-                    if (rulesByType.TryGetValue(specialEventType, out var specialRules) && specialRules.Count > 0)
-                    {
-                        var payload = CreatePayload(specialEventType, play, playByPlay, landing);
-
-                        foreach (var rule in specialRules)
-                        {
-                            try
-                            {
-                                var success = await _webhookDispatchService.SendWebhookAsync(rule, payload, cancellationToken);
-                                if (success)
-                                {
-                                    _logger.LogInformation(
-                                        "Webhook sent for {EventType} in game {GameId} to {RuleName}",
-                                        specialEventType, gameId, rule.Name ?? $"{rule.TeamAbbrev} webhook");
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                _logger.LogError(ex,
-                                    "Failed to send webhook for {EventType} in game {GameId}",
-                                    specialEventType, gameId);
-                            }
-                        }
                     }
                 }
             }
@@ -271,36 +254,40 @@ public class EventProcessingService : IEventProcessingService
         if (landing.Situation != null)
         {
             var situationCode = landing.Situation.SituationCode;
-            if (!string.IsNullOrEmpty(situationCode))
+            if (!string.IsNullOrEmpty(situationCode) && situationCode.Length >= 4)
             {
                 var homeStrength = landing.Situation.HomeTeam?.Strength ?? 5;
                 var awayStrength = landing.Situation.AwayTeam?.Strength ?? 5;
 
-                if (homeStrength > awayStrength)
+                // Check if goalies are pulled (position 0 = home goalie, position 3 = away goalie)
+                var homeGoaliePulled = situationCode[0] == '0';
+                var awayGoaliePulled = situationCode[3] == '0';
+
+                // Only trigger power play if it's a real power play (man advantage due to penalty),
+                // not just extra attacker from pulled goalie.
+                // A real power play means the team with more skaters has their goalie IN net.
+                if (homeStrength > awayStrength && !homeGoaliePulled)
                 {
+                    // Home team has more skaters and their goalie is in - real power play
                     await ProcessPowerPlayEventAsync(gameId, landing, landing.HomeTeam.Abbrev,
                         $"{homeStrength}v{awayStrength}", cancellationToken);
                 }
-                else if (awayStrength > homeStrength)
+                else if (awayStrength > homeStrength && !awayGoaliePulled)
                 {
+                    // Away team has more skaters and their goalie is in - real power play
                     await ProcessPowerPlayEventAsync(gameId, landing, landing.AwayTeam.Abbrev,
                         $"{awayStrength}v{homeStrength}", cancellationToken);
                 }
 
-                if (situationCode.Length >= 4)
+                // Process goalie pulled events
+                if (homeGoaliePulled)
                 {
-                    var homeGoalie = situationCode[0] == '0';
-                    var awayGoalie = situationCode[3] == '0';
+                    await ProcessGoaliePulledEventAsync(gameId, landing, landing.HomeTeam.Abbrev, cancellationToken);
+                }
 
-                    if (homeGoalie)
-                    {
-                        await ProcessGoaliePulledEventAsync(gameId, landing, landing.HomeTeam.Abbrev, cancellationToken);
-                    }
-
-                    if (awayGoalie)
-                    {
-                        await ProcessGoaliePulledEventAsync(gameId, landing, landing.AwayTeam.Abbrev, cancellationToken);
-                    }
+                if (awayGoaliePulled)
+                {
+                    await ProcessGoaliePulledEventAsync(gameId, landing, landing.AwayTeam.Abbrev, cancellationToken);
                 }
             }
         }
@@ -476,7 +463,11 @@ public class EventProcessingService : IEventProcessingService
         string strength,
         CancellationToken cancellationToken)
     {
-        var eventId = $"pp_{teamAbbrev}_{landing.PeriodDescriptor?.Number}_{landing.Clock?.TimeRemaining}";
+        // Use situation code + period + team as the stable event ID
+        // The situation code (e.g., "1551") uniquely identifies this power play scenario
+        // TimeRemaining was causing duplicate events since it changes every poll
+        var situationCode = landing.Situation?.SituationCode ?? "unknown";
+        var eventId = $"pp_{teamAbbrev}_{landing.PeriodDescriptor?.Number}_{situationCode}_{strength}";
 
         if (await IsEventProcessedAsync(gameId, eventId, cancellationToken))
         {
@@ -513,7 +504,10 @@ public class EventProcessingService : IEventProcessingService
         string teamAbbrev,
         CancellationToken cancellationToken)
     {
-        var eventId = $"goalie_pulled_{teamAbbrev}_{landing.PeriodDescriptor?.Number}";
+        // Include situation code to allow for multiple goalie pulls in the same period
+        // (e.g., pulled, goal scored against, goalie back in, pulled again later)
+        var situationCode = landing.Situation?.SituationCode ?? "unknown";
+        var eventId = $"goalie_pulled_{teamAbbrev}_{landing.PeriodDescriptor?.Number}_{situationCode}";
 
         if (await IsEventProcessedAsync(gameId, eventId, cancellationToken))
         {

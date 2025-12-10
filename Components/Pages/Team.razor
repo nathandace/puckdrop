@@ -2,10 +2,13 @@
 @using PuckDrop.Models.Api
 @using PuckDrop.Services
 @using PuckDrop.Components.Shared
+@using PuckDrop.State
 @inject INhlApiClient NhlApiClient
 @inject ITeamService TeamService
 @inject NavigationManager Navigation
+@inject GameStateContainer GameState
 @rendermode InteractiveServer
+@implements IDisposable
 
 <PageTitle>NHL Monitor - @TeamLogoHelper.GetTeamName(TeamAbbrev)</PageTitle>
 
@@ -51,8 +54,28 @@
             }
         </div>
 
+        <!-- Live Game Scoreboard -->
+        @if (_nextGame != null && _nextGame.GameState is "LIVE" or "CRIT" && _liveGameLanding != null)
+        {
+            <div class="live-game-section">
+                <a href="/game/@_nextGame.Id" class="live-game-link">
+                    <div class="live-badge-container">
+                        <span class="live-badge pulse">LIVE</span>
+                    </div>
+                    <Scoreboard
+                        AwayTeam="_liveGameLanding.AwayTeam"
+                        HomeTeam="_liveGameLanding.HomeTeam"
+                        Clock="_liveGameLanding.Clock"
+                        PeriodDescriptor="_liveGameLanding.PeriodDescriptor"
+                        GameState="_liveGameLanding.GameState"
+                        StartTime="_liveGameLanding.StartTimeUtc"
+                        AwaySituation="_liveGameLanding.Situation?.AwayTeam"
+                        HomeSituation="_liveGameLanding.Situation?.HomeTeam" />
+                </a>
+            </div>
+        }
         <!-- Pre-Game Countdown for Next Game -->
-        @if (_nextGame != null && _nextGame.GameState is "FUT" or "PRE")
+        else if (_nextGame != null && _nextGame.GameState is "FUT" or "PRE")
         {
             <div class="next-game-countdown">
                 <a href="/game/@_nextGame.Id" class="next-game-link">
@@ -68,6 +91,57 @@
                         SeasonSeries="_seasonSeries" />
                 </a>
             </div>
+        }
+
+        <!-- Upcoming Games Tile -->
+        @if (_schedule?.Games != null)
+        {
+            var upcomingGames = _schedule.Games
+                .Where(g => g.GameState is "FUT" or "PRE")
+                .OrderBy(g => g.StartTimeUtc)
+                .Take(5)
+                .ToList();
+
+            if (upcomingGames.Count > 0)
+            {
+                <div class="upcoming-games-tile">
+                    <h3>Upcoming Games</h3>
+                    <div class="upcoming-games-list">
+                        @foreach (var game in upcomingGames)
+                        {
+                            var isHome = game.HomeTeam.Abbrev == TeamAbbrev;
+                            var opponent = isHome ? game.AwayTeam : game.HomeTeam;
+                            var isToday = game.StartTimeUtc.Date == DateTime.UtcNow.Date;
+                            var isTomorrow = game.StartTimeUtc.Date == DateTime.UtcNow.Date.AddDays(1);
+
+                            <a href="/game/@game.Id" class="upcoming-game-item @(isToday ? "today" : "")">
+                                <div class="upcoming-date">
+                                    @if (isToday)
+                                    {
+                                        <span class="date-label today">TODAY</span>
+                                    }
+                                    else if (isTomorrow)
+                                    {
+                                        <span class="date-label">TMR</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="date-label">@game.StartTimeUtc.ToLocalTime().ToString("ddd").ToUpper()</span>
+                                    }
+                                    <span class="date-day">@game.StartTimeUtc.ToLocalTime().ToString("MMM d")</span>
+                                </div>
+                                <div class="upcoming-opponent">
+                                    <img src="@TeamLogoHelper.GetLogoUrl(opponent.Abbrev)" alt="@opponent.Abbrev" class="team-logo-sm" />
+                                    <span>@(isHome ? "vs" : "@") @opponent.Abbrev</span>
+                                </div>
+                                <div class="upcoming-time">
+                                    @game.StartTimeUtc.ToLocalTime().ToString("h:mm tt")
+                                </div>
+                            </a>
+                        }
+                    </div>
+                </div>
+            }
         }
 
         <!-- Tab Navigation -->
@@ -460,6 +534,10 @@
     private string? _homeTeamStreak;
     private List<PreGameCountdown.SeasonSeriesGame>? _seasonSeries;
 
+    // Live game data
+    private GameLandingResponse? _liveGameLanding;
+    private System.Threading.Timer? _liveGameTimer;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadDataAsync();
@@ -502,11 +580,91 @@
             {
                 await LoadPreGameDataAsync();
             }
+
+            // Load live game data if game is in progress
+            if (_nextGame != null && _nextGame.GameState is "LIVE" or "CRIT")
+            {
+                await LoadLiveGameDataAsync();
+                StartLiveGamePolling();
+            }
+            else
+            {
+                StopLiveGamePolling();
+            }
         }
         finally
         {
             _isLoading = false;
         }
+    }
+
+    private async Task LoadLiveGameDataAsync()
+    {
+        if (_nextGame == null) return;
+
+        try
+        {
+            _liveGameLanding = await NhlApiClient.GetGameLandingAsync(_nextGame.Id);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading live game data: {ex.Message}");
+        }
+    }
+
+    private void StartLiveGamePolling()
+    {
+        StopLiveGamePolling();
+        _liveGameTimer = new System.Threading.Timer(
+            async _ => await PollLiveGameAsync(),
+            null,
+            TimeSpan.FromSeconds(30),
+            TimeSpan.FromSeconds(30));
+    }
+
+    private void StopLiveGamePolling()
+    {
+        _liveGameTimer?.Dispose();
+        _liveGameTimer = null;
+    }
+
+    private async Task PollLiveGameAsync()
+    {
+        if (_nextGame == null) return;
+
+        try
+        {
+            _liveGameLanding = await NhlApiClient.GetGameLandingAsync(_nextGame.Id);
+
+            // Check if game has ended - stop polling and update display
+            if (_liveGameLanding?.GameState is "FINAL" or "OFF")
+            {
+                StopLiveGamePolling();
+                // Invalidate schedule cache to get fresh data
+                NhlApiClient.InvalidateScheduleCache(TeamAbbrev);
+                // Clear state
+                _nextGame = null;
+                _liveGameLanding = null;
+                // Reload to get fresh schedule data
+                await InvokeAsync(async () =>
+                {
+                    await LoadDataAsync();
+                    StateHasChanged();
+                });
+                return;
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error polling live game: {ex.Message}");
+        }
+    }
+
+    public void Dispose()
+    {
+        StopLiveGamePolling();
     }
 
     private async Task LoadPreGameDataAsync()

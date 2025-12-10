@@ -88,6 +88,12 @@ public class GamePollingBackgroundService : BackgroundService
                     _lastCleanup = DateTime.UtcNow;
                 }
 
+                // Always process webhook events for teams with live games
+                if (_webhookTeamLiveGames.Count > 0)
+                {
+                    await PollWebhookTeamGamesAsync(stoppingToken);
+                }
+
                 if (hasGame && hasViewers)
                 {
                     // Check if game is finished - don't continuously poll completed games
@@ -106,8 +112,7 @@ public class GamePollingBackgroundService : BackgroundService
                 }
                 else if (_webhookTeamLiveGames.Count > 0)
                 {
-                    // No viewers, but teams with webhooks have live games - poll for webhooks
-                    await PollWebhookTeamGamesAsync(stoppingToken);
+                    // No viewers, but teams with webhooks have live games - already polled above
                     await Task.Delay(PollingInterval, stoppingToken);
                 }
                 else

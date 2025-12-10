@@ -345,11 +345,16 @@ else
     {
         _filteredGames = _filter switch
         {
-            ScheduleFilter.Completed => _completedGames,
-            ScheduleFilter.Upcoming => _upcomingGames,
-            ScheduleFilter.Preseason => _preseasonGames,
-            ScheduleFilter.Playoffs => _playoffGames,
-            _ => _allGames
+            // Completed games: most recent first
+            ScheduleFilter.Completed => _completedGames.OrderByDescending(g => g.StartTimeUtc).ToList(),
+            // Upcoming games: nearest game first
+            ScheduleFilter.Upcoming => _upcomingGames.OrderBy(g => g.StartTimeUtc).ToList(),
+            // Preseason: most recent first
+            ScheduleFilter.Preseason => _preseasonGames.OrderByDescending(g => g.StartTimeUtc).ToList(),
+            // Playoffs: most recent first
+            ScheduleFilter.Playoffs => _playoffGames.OrderByDescending(g => g.StartTimeUtc).ToList(),
+            // All games: most recent first
+            _ => _allGames.OrderByDescending(g => g.StartTimeUtc).ToList()
         };
     }
 

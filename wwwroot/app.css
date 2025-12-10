@@ -397,6 +397,149 @@ select.form-control {
 }
 
 /* ==========================================================================
+   Live Game Section
+   ========================================================================== */
+.live-game-section {
+    margin-top: var(--spacing-lg);
+    margin-bottom: var(--spacing-xl);
+}
+
+.live-game-link {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    border-radius: var(--radius-lg);
+}
+
+.live-game-link:hover {
+    transform: translateY(-2px);
+}
+
+.live-game-link .scoreboard {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-xl);
+    border: 2px solid var(--danger);
+    box-shadow: 0 0 20px rgba(244, 67, 54, 0.2);
+}
+
+.live-game-link:hover .scoreboard {
+    box-shadow: 0 8px 32px rgba(244, 67, 54, 0.3);
+}
+
+.live-badge-container {
+    text-align: center;
+    margin-bottom: var(--spacing-md);
+}
+
+.live-badge {
+    display: inline-block;
+    background: var(--danger);
+    color: white;
+    padding: var(--spacing-xs) var(--spacing-md);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.live-badge.pulse {
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+    0%, 100% {
+        box-shadow: 0 0 5px rgba(244, 67, 54, 0.5);
+    }
+    50% {
+        box-shadow: 0 0 20px rgba(244, 67, 54, 0.8);
+    }
+}
+
+/* ==========================================================================
+   Upcoming Games Tile
+   ========================================================================== */
+.upcoming-games-tile {
+    background: var(--bg-card);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    margin-top: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+}
+
+.upcoming-games-tile h3 {
+    margin: 0 0 var(--spacing-md);
+    font-size: 1rem;
+    color: var(--text-secondary);
+}
+
+.upcoming-games-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.upcoming-game-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    text-decoration: none;
+    color: inherit;
+    transition: background-color var(--transition-fast);
+}
+
+.upcoming-game-item:hover {
+    background: var(--bg-hover);
+}
+
+.upcoming-game-item.today {
+    border-left: 3px solid var(--team-primary);
+}
+
+.upcoming-date {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 60px;
+}
+
+.upcoming-date .date-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.upcoming-date .date-label.today {
+    color: var(--team-primary);
+}
+
+.upcoming-date .date-day {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.upcoming-opponent {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex: 1;
+    font-weight: 500;
+}
+
+.upcoming-time {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+/* ==========================================================================
    Pre-Game Countdown
    ========================================================================== */
 .next-game-countdown {

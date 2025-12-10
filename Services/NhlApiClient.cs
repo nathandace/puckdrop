@@ -158,6 +158,13 @@ public class NhlApiClient : INhlApiClient
     }
 
     /// <inheritdoc />
+    public void InvalidateScheduleCache(string teamAbbrev)
+    {
+        var season = GetCurrentSeason();
+        _cache.Remove($"schedule_{teamAbbrev}_{season}");
+    }
+
+    /// <inheritdoc />
     public async Task<ScoreboardResponse?> GetScoreboardAsync(CancellationToken cancellationToken = default)
     {
         var cacheKey = "scoreboard_now";

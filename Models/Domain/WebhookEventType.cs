@@ -6,12 +6,12 @@ namespace PuckDrop.Models.Domain;
 public enum WebhookEventType
 {
     /// <summary>
-    /// A goal was scored by either team.
+    /// A goal was scored by the selected team.
     /// </summary>
     GoalScored = 0,
 
     /// <summary>
-    /// A penalty was committed by either team.
+    /// A penalty was committed by the selected team.
     /// </summary>
     PenaltyCommitted = 1,
 
@@ -78,15 +78,5 @@ public enum WebhookEventType
     /// <summary>
     /// Game starts in the configured time (pre-game reminder).
     /// </summary>
-    GameStartingSoon = 14,
-
-    /// <summary>
-    /// Your favorite team scored (only triggers for your team's goals).
-    /// </summary>
-    FavoriteTeamGoal = 15,
-
-    /// <summary>
-    /// The opponent scored against your favorite team.
-    /// </summary>
-    OpponentGoal = 16
+    GameStartingSoon = 14
 }
