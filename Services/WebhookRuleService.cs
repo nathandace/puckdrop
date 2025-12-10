@@ -114,4 +114,65 @@ public class WebhookRuleService : IWebhookRuleService
             .Distinct()
             .ToListAsync(cancellationToken);
     }
+
+    /// <inheritdoc />
+    public async Task<Dictionary<WebhookEventType, List<WebhookRule>>> GetAllEnabledRulesForTeamAsync(string teamAbbrev, CancellationToken cancellationToken = default)
+    {
+        await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var rules = await context.WebhookRules
+            .Where(r => r.IsEnabled && r.TeamAbbrev == teamAbbrev)
+            .ToListAsync(cancellationToken);
+
+        return rules
+            .GroupBy(r => r.EventType)
+            .ToDictionary(g => g.Key, g => g.ToList());
+    }
+
+    /// <inheritdoc />
+    public async Task<List<WebhookLog>> GetLogsForRuleAsync(int ruleId, int limit = 50, CancellationToken cancellationToken = default)
+    {
+        await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+        return await context.WebhookLogs
+            .Where(l => l.WebhookRuleId == ruleId)
+            .OrderByDescending(l => l.TriggeredAt)
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<List<WebhookLog>> GetAllLogsAsync(int? ruleId = null, int limit = 100, CancellationToken cancellationToken = default)
+    {
+        await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var query = context.WebhookLogs
+            .Include(l => l.WebhookRule)
+            .AsQueryable();
+
+        if (ruleId.HasValue)
+        {
+            query = query.Where(l => l.WebhookRuleId == ruleId.Value);
+        }
+
+        return await query
+            .OrderByDescending(l => l.TriggeredAt)
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> CleanupOldLogsAsync(int daysToKeep = 14, CancellationToken cancellationToken = default)
+    {
+        await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var cutoffDate = DateTime.UtcNow.AddDays(-daysToKeep);
+
+        var deletedCount = await context.WebhookLogs
+            .Where(l => l.TriggeredAt < cutoffDate)
+            .ExecuteDeleteAsync(cancellationToken);
+
+        if (deletedCount > 0)
+        {
+            _logger.LogInformation("Cleaned up {Count} webhook logs older than {Days} days", deletedCount, daysToKeep);
+        }
+
+        return deletedCount;
+    }
 }

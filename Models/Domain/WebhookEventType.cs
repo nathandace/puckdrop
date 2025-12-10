@@ -53,5 +53,40 @@ public enum WebhookEventType
     /// <summary>
     /// The game has started (first period begins).
     /// </summary>
-    GameStart = 9
+    GameStart = 9,
+
+    /// <summary>
+    /// Your favorite team won the game.
+    /// </summary>
+    TeamWin = 10,
+
+    /// <summary>
+    /// Your favorite team lost the game.
+    /// </summary>
+    TeamLoss = 11,
+
+    /// <summary>
+    /// The game is going to overtime.
+    /// </summary>
+    OvertimeStart = 12,
+
+    /// <summary>
+    /// The game is going to a shootout.
+    /// </summary>
+    ShootoutStart = 13,
+
+    /// <summary>
+    /// Game starts in the configured time (pre-game reminder).
+    /// </summary>
+    GameStartingSoon = 14,
+
+    /// <summary>
+    /// Your favorite team scored (only triggers for your team's goals).
+    /// </summary>
+    FavoriteTeamGoal = 15,
+
+    /// <summary>
+    /// The opponent scored against your favorite team.
+    /// </summary>
+    OpponentGoal = 16
 }

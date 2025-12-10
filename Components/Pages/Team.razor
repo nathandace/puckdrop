@@ -1,6 +1,7 @@
 @page "/team/{TeamAbbrev}"
 @using PuckDrop.Models.Api
 @using PuckDrop.Services
+@using PuckDrop.Components.Shared
 @inject INhlApiClient NhlApiClient
 @inject ITeamService TeamService
 @inject NavigationManager Navigation
@@ -49,6 +50,25 @@
                 <span class="favorite-badge">Your Team</span>
             }
         </div>
+
+        <!-- Pre-Game Countdown for Next Game -->
+        @if (_nextGame != null && _nextGame.GameState is "FUT" or "PRE")
+        {
+            <div class="next-game-countdown">
+                <a href="/game/@_nextGame.Id" class="next-game-link">
+                    <PreGameCountdown
+                        StartTime="_nextGame.StartTimeUtc"
+                        AwayTeamAbbrev="@_nextGame.AwayTeam.Abbrev"
+                        HomeTeamAbbrev="@_nextGame.HomeTeam.Abbrev"
+                        AwayTeamRecord="@_awayTeamRecord"
+                        HomeTeamRecord="@_homeTeamRecord"
+                        AwayTeamStreak="@_awayTeamStreak"
+                        HomeTeamStreak="@_homeTeamStreak"
+                        Venue="@_nextGame.Venue?.Default"
+                        SeasonSeries="_seasonSeries" />
+                </a>
+            </div>
+        }
 
         <!-- Tab Navigation -->
         <div class="team-tabs">
@@ -432,6 +452,14 @@
     private Models.Domain.FavoriteTeam? _favoriteTeam;
     private StandingsResponse? _standings;
 
+    // Next game countdown data
+    private ScheduleGame? _nextGame;
+    private string? _awayTeamRecord;
+    private string? _homeTeamRecord;
+    private string? _awayTeamStreak;
+    private string? _homeTeamStreak;
+    private List<PreGameCountdown.SeasonSeriesGame>? _seasonSeries;
+
     protected override async Task OnInitializedAsync()
     {
         await LoadDataAsync();
@@ -462,11 +490,87 @@
             _schedule = scheduleTask.Result;
             _standings = standingsTask.Result;
             _standing = _standings?.Standings.FirstOrDefault(s => s.TeamAbbrev.Default == TeamAbbrev);
+
+            // Find next upcoming game
+            _nextGame = _schedule?.Games?
+                .Where(g => g.GameState is "FUT" or "PRE" or "LIVE" or "CRIT")
+                .OrderBy(g => g.StartTimeUtc)
+                .FirstOrDefault();
+
+            // Load pre-game data if there's an upcoming game
+            if (_nextGame != null && _nextGame.GameState is "FUT" or "PRE")
+            {
+                await LoadPreGameDataAsync();
+            }
         }
         finally
         {
             _isLoading = false;
         }
+    }
+
+    private async Task LoadPreGameDataAsync()
+    {
+        if (_nextGame == null || _standings?.Standings == null) return;
+
+        try
+        {
+            // Get team records from standings
+            var awayTeamStanding = _standings.Standings.FirstOrDefault(s =>
+                s.TeamAbbrev.Default == _nextGame.AwayTeam.Abbrev);
+            var homeTeamStanding = _standings.Standings.FirstOrDefault(s =>
+                s.TeamAbbrev.Default == _nextGame.HomeTeam.Abbrev);
+
+            if (awayTeamStanding != null)
+            {
+                _awayTeamRecord = $"{awayTeamStanding.Wins}-{awayTeamStanding.Losses}-{awayTeamStanding.OtLosses}";
+                _awayTeamStreak = $"{awayTeamStanding.StreakCode}{awayTeamStanding.StreakCount}";
+            }
+            if (homeTeamStanding != null)
+            {
+                _homeTeamRecord = $"{homeTeamStanding.Wins}-{homeTeamStanding.Losses}-{homeTeamStanding.OtLosses}";
+                _homeTeamStreak = $"{homeTeamStanding.StreakCode}{homeTeamStanding.StreakCount}";
+            }
+
+            // Load season series between teams
+            await LoadSeasonSeriesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading pre-game data: {ex.Message}");
+        }
+    }
+
+    private async Task LoadSeasonSeriesAsync()
+    {
+        if (_nextGame == null || _schedule?.Games == null) return;
+
+        try
+        {
+            var opponentAbbrev = _nextGame.AwayTeam.Abbrev == TeamAbbrev
+                ? _nextGame.HomeTeam.Abbrev
+                : _nextGame.AwayTeam.Abbrev;
+
+            _seasonSeries = _schedule.Games
+                .Where(g =>
+                    (g.GameState is "FINAL" or "OFF") &&
+                    ((g.AwayTeam.Abbrev == opponentAbbrev) || (g.HomeTeam.Abbrev == opponentAbbrev)))
+                .Select(g => new PreGameCountdown.SeasonSeriesGame
+                {
+                    Date = DateTime.TryParse(g.GameDate, out var date) ? date : DateTime.MinValue,
+                    AwayTeamAbbrev = g.AwayTeam.Abbrev,
+                    HomeTeamAbbrev = g.HomeTeam.Abbrev,
+                    AwayScore = g.AwayTeam.Score ?? 0,
+                    HomeScore = g.HomeTeam.Score ?? 0
+                })
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading season series: {ex.Message}");
+        }
+
+        await Task.CompletedTask;
     }
 
     private void NavigateToPlayer(int playerId)

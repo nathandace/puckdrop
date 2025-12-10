@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
+using PuckDrop.Configuration;
 using PuckDrop.Models.Api;
 
 namespace PuckDrop.Services;
@@ -12,14 +14,15 @@ public class NhlApiClient : INhlApiClient
     private readonly HttpClient _httpClient;
     private readonly IMemoryCache _cache;
     private readonly ILogger<NhlApiClient> _logger;
+    private readonly NhlApiOptions _options;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
 
-    private static readonly TimeSpan StaticDataCacheDuration = TimeSpan.FromHours(6);
-    private static readonly TimeSpan LiveDataCacheDuration = TimeSpan.FromSeconds(15);
+    private TimeSpan StaticDataCacheDuration => TimeSpan.FromMinutes(_options.CacheDuration.StaticDataMinutes);
+    private TimeSpan LiveDataCacheDuration => TimeSpan.FromSeconds(_options.CacheDuration.LiveDataSeconds);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="NhlApiClient"/> class.
@@ -27,14 +30,17 @@ public class NhlApiClient : INhlApiClient
     /// <param name="httpClientFactory">The HTTP client factory.</param>
     /// <param name="cache">The memory cache.</param>
     /// <param name="logger">The logger.</param>
+    /// <param name="options">The NHL API configuration options.</param>
     public NhlApiClient(
         IHttpClientFactory httpClientFactory,
         IMemoryCache cache,
-        ILogger<NhlApiClient> logger)
+        ILogger<NhlApiClient> logger,
+        IOptions<NhlApiOptions> options)
     {
         _httpClient = httpClientFactory.CreateClient("NhlApi");
         _cache = cache;
         _logger = logger;
+        _options = options.Value;
     }
 
     /// <inheritdoc />

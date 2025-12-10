@@ -59,7 +59,17 @@ public class EventProcessingService : IEventProcessingService
             return 0;
         }
 
+        // Pre-fetch all processed events for this game in a single query
+        var allProcessedEventIds = await GetProcessedEventIdsAsync(gameId, cancellationToken);
+
+        // Pre-fetch all enabled rules for both teams (single query per team)
+        var homeRulesByType = await _webhookRuleService.GetAllEnabledRulesForTeamAsync(
+            landing.HomeTeam.Abbrev, cancellationToken);
+        var awayRulesByType = await _webhookRuleService.GetAllEnabledRulesForTeamAsync(
+            landing.AwayTeam.Abbrev, cancellationToken);
+
         var processedCount = 0;
+        var eventsToMark = new List<(string EventId, WebhookEventType EventType)>();
 
         foreach (var play in playByPlay.Plays)
         {
@@ -71,53 +81,101 @@ public class EventProcessingService : IEventProcessingService
 
             var eventId = $"{play.EventId}_{play.TypeCode}";
 
-            if (await IsEventProcessedAsync(gameId, eventId, cancellationToken))
+            // Check against pre-fetched set instead of database query
+            if (allProcessedEventIds.Contains(eventId))
             {
                 continue;
             }
 
-            // Get the team that owns this event
-            var eventTeamAbbrev = play.Details != null
-                ? GetTeamAbbrevFromId(play.Details.EventOwnerTeamId, playByPlay)
-                : null;
-
-            // Get rules for both home and away teams (events may trigger webhooks for either)
-            var homeRules = await _webhookRuleService.GetEnabledRulesForEventAsync(
-                webhookEventType.Value, landing.HomeTeam.Abbrev, cancellationToken);
-            var awayRules = await _webhookRuleService.GetEnabledRulesForEventAsync(
-                webhookEventType.Value, landing.AwayTeam.Abbrev, cancellationToken);
-            var enabledRules = homeRules.Concat(awayRules).ToList();
-
-            if (enabledRules.Count == 0)
+            // Get rules from pre-fetched dictionaries
+            var enabledRules = new List<WebhookRule>();
+            if (homeRulesByType.TryGetValue(webhookEventType.Value, out var homeRules))
             {
-                await MarkEventProcessedAsync(gameId, eventId, webhookEventType.Value, cancellationToken);
-                continue;
+                enabledRules.AddRange(homeRules);
+            }
+            if (awayRulesByType.TryGetValue(webhookEventType.Value, out var awayRules))
+            {
+                enabledRules.AddRange(awayRules);
             }
 
-            var payload = CreatePayload(webhookEventType.Value, play, playByPlay, landing);
+            // Track event for batch marking
+            eventsToMark.Add((eventId, webhookEventType.Value));
 
-            foreach (var rule in enabledRules)
+            // Send standard webhooks
+            if (enabledRules.Count > 0)
             {
-                try
+                var payload = CreatePayload(webhookEventType.Value, play, playByPlay, landing);
+
+                foreach (var rule in enabledRules)
                 {
-                    var success = await _webhookDispatchService.SendWebhookAsync(rule, payload, cancellationToken);
-                    if (success)
+                    try
                     {
-                        _logger.LogInformation(
-                            "Webhook sent for {EventType} in game {GameId} to {RuleName}",
-                            webhookEventType.Value, gameId, rule.Name ?? $"{rule.TeamAbbrev} webhook");
+                        var success = await _webhookDispatchService.SendWebhookAsync(rule, payload, cancellationToken);
+                        if (success)
+                        {
+                            _logger.LogInformation(
+                                "Webhook sent for {EventType} in game {GameId} to {RuleName}",
+                                webhookEventType.Value, gameId, rule.Name ?? $"{rule.TeamAbbrev} webhook");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex,
+                            "Failed to send webhook for {EventType} in game {GameId}",
+                            webhookEventType.Value, gameId);
                     }
                 }
-                catch (Exception ex)
+            }
+
+            // For goals, also check for FavoriteTeamGoal and OpponentGoal rules
+            if (webhookEventType.Value == WebhookEventType.GoalScored && play.Details?.EventOwnerTeamId != null)
+            {
+                var scoringTeamAbbrev = GetTeamAbbrevFromId(play.Details.EventOwnerTeamId, playByPlay);
+
+                // For each team, determine if this is their goal or opponent's goal
+                foreach (var (teamAbbrev, rulesByType) in new[] {
+                    (landing.HomeTeam.Abbrev, homeRulesByType),
+                    (landing.AwayTeam.Abbrev, awayRulesByType) })
                 {
-                    _logger.LogError(ex,
-                        "Failed to send webhook for {EventType} in game {GameId}",
-                        webhookEventType.Value, gameId);
+                    var isTeamGoal = scoringTeamAbbrev == teamAbbrev;
+                    var specialEventType = isTeamGoal
+                        ? WebhookEventType.FavoriteTeamGoal
+                        : WebhookEventType.OpponentGoal;
+
+                    if (rulesByType.TryGetValue(specialEventType, out var specialRules) && specialRules.Count > 0)
+                    {
+                        var payload = CreatePayload(specialEventType, play, playByPlay, landing);
+
+                        foreach (var rule in specialRules)
+                        {
+                            try
+                            {
+                                var success = await _webhookDispatchService.SendWebhookAsync(rule, payload, cancellationToken);
+                                if (success)
+                                {
+                                    _logger.LogInformation(
+                                        "Webhook sent for {EventType} in game {GameId} to {RuleName}",
+                                        specialEventType, gameId, rule.Name ?? $"{rule.TeamAbbrev} webhook");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogError(ex,
+                                    "Failed to send webhook for {EventType} in game {GameId}",
+                                    specialEventType, gameId);
+                            }
+                        }
+                    }
                 }
             }
 
-            await MarkEventProcessedAsync(gameId, eventId, webhookEventType.Value, cancellationToken);
             processedCount++;
+        }
+
+        // Batch mark all processed events
+        if (eventsToMark.Count > 0)
+        {
+            await BatchMarkEventsProcessedAsync(gameId, eventsToMark, cancellationToken);
         }
 
         await ProcessGameStateEventsAsync(gameId, landing, cancellationToken);
@@ -125,29 +183,81 @@ public class EventProcessingService : IEventProcessingService
         return processedCount;
     }
 
+    /// <summary>
+    /// Gets all processed event IDs for a game in a single query.
+    /// </summary>
+    private async Task<HashSet<string>> GetProcessedEventIdsAsync(int gameId, CancellationToken cancellationToken)
+    {
+        await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var eventIds = await context.ProcessedEvents
+            .Where(e => e.GameId == gameId)
+            .Select(e => e.EventId)
+            .ToListAsync(cancellationToken);
+        return new HashSet<string>(eventIds);
+    }
+
+    /// <summary>
+    /// Batch marks multiple events as processed in a single transaction.
+    /// </summary>
+    private async Task BatchMarkEventsProcessedAsync(
+        int gameId,
+        List<(string EventId, WebhookEventType EventType)> events,
+        CancellationToken cancellationToken)
+    {
+        await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+
+        // Get existing event IDs to avoid duplicates
+        var eventIds = events.Select(e => e.EventId).ToList();
+        var existingEventIds = await context.ProcessedEvents
+            .Where(e => e.GameId == gameId && eventIds.Contains(e.EventId))
+            .Select(e => e.EventId)
+            .ToListAsync(cancellationToken);
+        var existingSet = new HashSet<string>(existingEventIds);
+
+        // Add only new events
+        var newEvents = events
+            .Where(e => !existingSet.Contains(e.EventId))
+            .Select(e => new ProcessedEvent
+            {
+                GameId = gameId,
+                EventId = e.EventId,
+                EventType = e.EventType,
+                ProcessedAt = DateTime.UtcNow
+            });
+
+        context.ProcessedEvents.AddRange(newEvents);
+
+        try
+        {
+            await context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException ex)
+        {
+            _logger.LogDebug(ex, "Some events for game {GameId} already processed (race condition)", gameId);
+        }
+    }
+
     /// <inheritdoc />
     public async Task<int> CleanupOldEventsAsync(DateTime olderThan, CancellationToken cancellationToken = default)
     {
         await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
 
-        var oldEvents = await context.ProcessedEvents
+        // Use ExecuteDeleteAsync for better performance - deletes directly in database
+        // without loading entities into memory
+        var deletedCount = await context.ProcessedEvents
             .Where(e => e.ProcessedAt < olderThan)
-            .ToListAsync(cancellationToken);
+            .ExecuteDeleteAsync(cancellationToken);
 
-        if (oldEvents.Count == 0)
+        if (deletedCount > 0)
         {
-            return 0;
+            _logger.LogInformation("Cleaned up {Count} old processed events", deletedCount);
         }
 
-        context.ProcessedEvents.RemoveRange(oldEvents);
-        await context.SaveChangesAsync(cancellationToken);
-
-        _logger.LogInformation("Cleaned up {Count} old processed events", oldEvents.Count);
-        return oldEvents.Count;
+        return deletedCount;
     }
 
     /// <summary>
-    /// Processes game state events like power plays and goalie pulls.
+    /// Processes game state events like power plays, goalie pulls, overtime/shootout starts, and game results.
     /// </summary>
     /// <param name="gameId">The game ID.</param>
     /// <param name="landing">The game landing response.</param>
@@ -157,46 +267,203 @@ public class EventProcessingService : IEventProcessingService
         GameLandingResponse landing,
         CancellationToken cancellationToken)
     {
-        if (landing.Situation == null)
+        // Process power play and goalie pull events
+        if (landing.Situation != null)
+        {
+            var situationCode = landing.Situation.SituationCode;
+            if (!string.IsNullOrEmpty(situationCode))
+            {
+                var homeStrength = landing.Situation.HomeTeam?.Strength ?? 5;
+                var awayStrength = landing.Situation.AwayTeam?.Strength ?? 5;
+
+                if (homeStrength > awayStrength)
+                {
+                    await ProcessPowerPlayEventAsync(gameId, landing, landing.HomeTeam.Abbrev,
+                        $"{homeStrength}v{awayStrength}", cancellationToken);
+                }
+                else if (awayStrength > homeStrength)
+                {
+                    await ProcessPowerPlayEventAsync(gameId, landing, landing.AwayTeam.Abbrev,
+                        $"{awayStrength}v{homeStrength}", cancellationToken);
+                }
+
+                if (situationCode.Length >= 4)
+                {
+                    var homeGoalie = situationCode[0] == '0';
+                    var awayGoalie = situationCode[3] == '0';
+
+                    if (homeGoalie)
+                    {
+                        await ProcessGoaliePulledEventAsync(gameId, landing, landing.HomeTeam.Abbrev, cancellationToken);
+                    }
+
+                    if (awayGoalie)
+                    {
+                        await ProcessGoaliePulledEventAsync(gameId, landing, landing.AwayTeam.Abbrev, cancellationToken);
+                    }
+                }
+            }
+        }
+
+        // Process overtime start
+        if (landing.PeriodDescriptor?.PeriodType == "OT" && landing.GameState is "LIVE" or "CRIT")
+        {
+            await ProcessOvertimeStartEventAsync(gameId, landing, cancellationToken);
+        }
+
+        // Process shootout start
+        if (landing.PeriodDescriptor?.PeriodType == "SO" && landing.GameState is "LIVE" or "CRIT")
+        {
+            await ProcessShootoutStartEventAsync(gameId, landing, cancellationToken);
+        }
+
+        // Process game end with win/loss results
+        if (landing.GameState is "FINAL" or "OFF")
+        {
+            await ProcessGameResultEventsAsync(gameId, landing, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Processes overtime start event.
+    /// </summary>
+    private async Task ProcessOvertimeStartEventAsync(
+        int gameId,
+        GameLandingResponse landing,
+        CancellationToken cancellationToken)
+    {
+        var periodNumber = landing.PeriodDescriptor?.Number ?? 4;
+        var eventId = $"ot_start_{periodNumber}";
+
+        if (await IsEventProcessedAsync(gameId, eventId, cancellationToken))
         {
             return;
         }
 
-        var situationCode = landing.Situation.SituationCode;
-        if (string.IsNullOrEmpty(situationCode))
+        // Send to both teams
+        var teams = new[] { landing.HomeTeam.Abbrev, landing.AwayTeam.Abbrev };
+        foreach (var teamAbbrev in teams)
+        {
+            var rules = await _webhookRuleService.GetEnabledRulesForEventAsync(
+                WebhookEventType.OvertimeStart, teamAbbrev, cancellationToken);
+
+            if (rules.Count > 0)
+            {
+                var payload = CreateBasePayload(WebhookEventType.OvertimeStart, landing);
+                payload.Details = new WebhookEventDetails
+                {
+                    Team = teamAbbrev
+                };
+
+                foreach (var rule in rules)
+                {
+                    await _webhookDispatchService.SendWebhookAsync(rule, payload, cancellationToken);
+                }
+            }
+        }
+
+        await MarkEventProcessedAsync(gameId, eventId, WebhookEventType.OvertimeStart, cancellationToken);
+    }
+
+    /// <summary>
+    /// Processes shootout start event.
+    /// </summary>
+    private async Task ProcessShootoutStartEventAsync(
+        int gameId,
+        GameLandingResponse landing,
+        CancellationToken cancellationToken)
+    {
+        var eventId = "so_start";
+
+        if (await IsEventProcessedAsync(gameId, eventId, cancellationToken))
         {
             return;
         }
 
-        var homeStrength = landing.Situation.HomeTeam?.Strength ?? 5;
-        var awayStrength = landing.Situation.AwayTeam?.Strength ?? 5;
-
-        if (homeStrength > awayStrength)
+        // Send to both teams
+        var teams = new[] { landing.HomeTeam.Abbrev, landing.AwayTeam.Abbrev };
+        foreach (var teamAbbrev in teams)
         {
-            await ProcessPowerPlayEventAsync(gameId, landing, landing.HomeTeam.Abbrev,
-                $"{homeStrength}v{awayStrength}", cancellationToken);
-        }
-        else if (awayStrength > homeStrength)
-        {
-            await ProcessPowerPlayEventAsync(gameId, landing, landing.AwayTeam.Abbrev,
-                $"{awayStrength}v{homeStrength}", cancellationToken);
-        }
+            var rules = await _webhookRuleService.GetEnabledRulesForEventAsync(
+                WebhookEventType.ShootoutStart, teamAbbrev, cancellationToken);
 
-        if (situationCode.Length >= 4)
-        {
-            var homeGoalie = situationCode[0] == '0';
-            var awayGoalie = situationCode[3] == '0';
-
-            if (homeGoalie)
+            if (rules.Count > 0)
             {
-                await ProcessGoaliePulledEventAsync(gameId, landing, landing.HomeTeam.Abbrev, cancellationToken);
-            }
+                var payload = CreateBasePayload(WebhookEventType.ShootoutStart, landing);
+                payload.Details = new WebhookEventDetails
+                {
+                    Team = teamAbbrev
+                };
 
-            if (awayGoalie)
-            {
-                await ProcessGoaliePulledEventAsync(gameId, landing, landing.AwayTeam.Abbrev, cancellationToken);
+                foreach (var rule in rules)
+                {
+                    await _webhookDispatchService.SendWebhookAsync(rule, payload, cancellationToken);
+                }
             }
         }
+
+        await MarkEventProcessedAsync(gameId, eventId, WebhookEventType.ShootoutStart, cancellationToken);
+    }
+
+    /// <summary>
+    /// Processes game result events (TeamWin/TeamLoss) for a completed game.
+    /// </summary>
+    private async Task ProcessGameResultEventsAsync(
+        int gameId,
+        GameLandingResponse landing,
+        CancellationToken cancellationToken)
+    {
+        var eventId = "game_result";
+
+        if (await IsEventProcessedAsync(gameId, eventId, cancellationToken))
+        {
+            return;
+        }
+
+        var homeWon = landing.HomeTeam.Score > landing.AwayTeam.Score;
+        var awayWon = landing.AwayTeam.Score > landing.HomeTeam.Score;
+
+        // Process winner
+        var winningTeam = homeWon ? landing.HomeTeam.Abbrev : landing.AwayTeam.Abbrev;
+        var losingTeam = homeWon ? landing.AwayTeam.Abbrev : landing.HomeTeam.Abbrev;
+
+        // Send TeamWin webhook
+        var winRules = await _webhookRuleService.GetEnabledRulesForEventAsync(
+            WebhookEventType.TeamWin, winningTeam, cancellationToken);
+
+        if (winRules.Count > 0)
+        {
+            var payload = CreateBasePayload(WebhookEventType.TeamWin, landing);
+            payload.Details = new WebhookEventDetails
+            {
+                Team = winningTeam
+            };
+
+            foreach (var rule in winRules)
+            {
+                await _webhookDispatchService.SendWebhookAsync(rule, payload, cancellationToken);
+            }
+        }
+
+        // Send TeamLoss webhook
+        var lossRules = await _webhookRuleService.GetEnabledRulesForEventAsync(
+            WebhookEventType.TeamLoss, losingTeam, cancellationToken);
+
+        if (lossRules.Count > 0)
+        {
+            var payload = CreateBasePayload(WebhookEventType.TeamLoss, landing);
+            payload.Details = new WebhookEventDetails
+            {
+                Team = losingTeam
+            };
+
+            foreach (var rule in lossRules)
+            {
+                await _webhookDispatchService.SendWebhookAsync(rule, payload, cancellationToken);
+            }
+        }
+
+        await MarkEventProcessedAsync(gameId, eventId, WebhookEventType.GameEnd, cancellationToken);
     }
 
     /// <summary>

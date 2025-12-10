@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using PuckDrop.Configuration;
 using PuckDrop.Data;
 using PuckDrop.Components;
 using PuckDrop.Services;
@@ -17,10 +18,13 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContextFactory<NhlDbContext>(options =>
     options.UseSqlite(connectionString));
 
+// Get NHL API options for HTTP client configuration
+var nhlApiOptions = builder.Configuration.GetSection(NhlApiOptions.SectionName).Get<NhlApiOptions>() ?? new NhlApiOptions();
+
 // Add HTTP client for NHL API with retry handling
 builder.Services.AddHttpClient("NhlApi", client =>
 {
-    client.BaseAddress = new Uri("https://api-web.nhle.com");
+    client.BaseAddress = new Uri(nhlApiOptions.BaseUrl);
     client.DefaultRequestHeaders.Add("Accept", "application/json");
     client.DefaultRequestHeaders.Add("User-Agent", "PuckDrop/1.0");
     client.Timeout = TimeSpan.FromSeconds(30);
@@ -41,6 +45,7 @@ builder.Services.AddScoped<IWebhookRuleService, WebhookRuleService>();
 builder.Services.AddScoped<IWebhookDispatchService, WebhookDispatchService>();
 builder.Services.AddScoped<IEventProcessingService, EventProcessingService>();
 builder.Services.AddSingleton<IMockDataService, MockDataService>();
+builder.Services.AddSingleton<IWebhookNotificationService, WebhookNotificationService>();
 
 // Register singleton state container
 builder.Services.AddSingleton<GameStateContainer>();

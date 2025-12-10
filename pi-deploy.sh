@@ -31,7 +31,7 @@ PI_USER="YOUR_PI_USER"             # Pi username (e.g., pi, admin)
 PI_HOST="YOUR_PI_IP_HERE"          # Replace with your Pi's IP (e.g., 192.168.1.100)
 PI_NAME="nhl"                      # Friendly name for your Pi
 PI_PATH="/home/YOUR_PI_USER/puckdrop"  # Path where app will be deployed
-PI_PORT="5050"                     # Port for the web app
+PI_PORT="5050"                     # Port for the web app              # Port for the web app
 
 # Validate configuration
 if [ "$PI_HOST" = "YOUR_PI_IP_HERE" ]; then
@@ -56,10 +56,13 @@ echo "🔨 Building .NET application for linux-arm64..."
 cd .
 
 # Clean previous builds
-dotnet clean
+dotnet clean PuckDrop.csproj
 
-# Publish self-contained for ARM64
-dotnet publish -c Release -r linux-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o ./publish
+# Clean the publish folder to remove stale files
+rm -rf ./publish
+
+# Publish self-contained for ARM64 (specify project file to avoid solution-level warning)
+dotnet publish PuckDrop.csproj -c Release -r linux-arm64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o ./publish
 
 if [ $? -ne 0 ]; then
     echo "❌ .NET publish failed"
@@ -68,11 +71,9 @@ fi
 
 echo "✅ .NET application built successfully"
 
-# Copy the database if it exists
-if [ -f "nhl.db" ]; then
-    echo "✅ Including existing database (nhl.db)"
-    cp nhl.db ./publish/
-fi
+# Do NOT copy local database - preserve the one on the Pi
+# If you need to deploy a fresh database, manually copy it:
+#   scp nhl.db admin@192.168.1.10:/home/admin/puckdrop/
 
 # Clean up any nested publish directory
 if [ -d "./publish/publish" ]; then
@@ -98,18 +99,36 @@ echo "🔧 Setting up on $PI_NAME Pi..."
 echo "🔐 Enter password again when prompted:"
 ssh $PI_USER@$PI_HOST << ENDSSH
 
-# Stop any existing service
+# Stop any existing service and ensure port is released
+echo "⏹️ Stopping existing service..."
 sudo systemctl stop puckdrop 2>/dev/null || true
+sleep 2
+
+# Kill any process still holding the port
+sudo fuser -k 5050/tcp 2>/dev/null || true
+sleep 1
 
 # Create and setup app directory
 mkdir -p $PI_PATH
 mkdir -p /home/$PI_USER/logs
 cd $PI_PATH
 
+# Backup existing database before extraction
+if [ -f "nhl.db" ]; then
+    echo "💾 Backing up existing database..."
+    cp nhl.db /tmp/nhl.db.backup
+fi
+
 # Extract files
 echo "📦 Extracting deployment package..."
 tar -xzf /tmp/puckdrop-deploy.tar.gz
 rm /tmp/puckdrop-deploy.tar.gz
+
+# Restore database from backup
+if [ -f "/tmp/nhl.db.backup" ]; then
+    echo "💾 Restoring database..."
+    mv /tmp/nhl.db.backup nhl.db
+fi
 
 # Debug: List all extracted files
 echo "🔍 Files after extraction:"

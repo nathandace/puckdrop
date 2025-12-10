@@ -4,6 +4,8 @@
 @inject IWebhookRuleService WebhookRuleService
 @inject IWebhookDispatchService WebhookDispatchService
 @inject ITeamService TeamService
+@inject IWebhookNotificationService WebhookNotificationService
+@implements IDisposable
 @rendermode InteractiveServer
 
 <PageTitle>Webhook Configuration - NHL Monitor</PageTitle>
@@ -110,6 +112,78 @@
                         }
                     </div>
                 }
+
+                <!-- Webhook History Section -->
+                <div class="history-section">
+                    <div class="section-header">
+                        <h2>Webhook History</h2>
+                        <div class="history-filter">
+                            <select @bind="_historyFilterRuleId" @bind:after="LoadHistoryAsync">
+                                <option value="">All Webhooks</option>
+                                @foreach (var rule in _rules)
+                                {
+                                    <option value="@rule.Id">@(string.IsNullOrEmpty(rule.Name) ? $"{rule.TeamAbbrev} - {GetEventTypeDisplayName(rule.EventType)}" : rule.Name)</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+
+                    @if (_isLoadingHistory)
+                    {
+                        <div class="history-loading">Loading history...</div>
+                    }
+                    else if (_webhookHistory.Count > 0)
+                    {
+                        <div class="history-table-container">
+                            <table class="history-table">
+                                <thead>
+                                    <tr>
+                                        <th class="col-status">Status</th>
+                                        <th class="col-webhook">Webhook</th>
+                                        <th class="col-event">Event</th>
+                                        <th class="col-time">Time</th>
+                                        <th class="col-error">Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var log in _webhookHistory)
+                                    {
+                                        <tr class="@(log.Success ? "success" : "error")">
+                                            <td class="col-status">
+                                                <span class="status-icon">@(log.Success ? "✓" : "✗")</span>
+                                            </td>
+                                            <td class="col-webhook">
+                                                @if (log.WebhookRule != null)
+                                                {
+                                                    <div class="webhook-info">
+                                                        <img src="@TeamLogoHelper.GetLogoUrl(log.WebhookRule.TeamAbbrev)" alt="@log.WebhookRule.TeamAbbrev" class="team-logo-xs" />
+                                                        <span>@(string.IsNullOrEmpty(log.WebhookRule.Name) ? $"{log.WebhookRule.TeamAbbrev}" : log.WebhookRule.Name)</span>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-muted">Unknown</span>
+                                                }
+                                            </td>
+                                            <td class="col-event">@log.EventDescription</td>
+                                            <td class="col-time">@FormatTimeAgo(log.TriggeredAt)</td>
+                                            <td class="col-error">
+                                                @if (!log.Success && !string.IsNullOrEmpty(log.ErrorMessage))
+                                                {
+                                                    <span class="error-text" title="@log.ErrorMessage">@TruncateError(log.ErrorMessage)</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="history-empty">No webhook history yet</div>
+                    }
+                </div>
             </div>
 
             <div class="info-section">
@@ -146,7 +220,7 @@
 
 @if (_showModal)
 {
-    <div class="modal-overlay" @onclick="CloseModal">
+    <div class="modal-overlay">
         <div class="modal-content" @onclick:stopPropagation="true">
             <div class="modal-header">
                 <h2>@(_editingRule == null ? "Create Webhook Rule" : "Edit Webhook Rule")</h2>
@@ -351,12 +425,63 @@
     private WebhookRuleFormModel _formModel = new();
     private Dictionary<int, TestResult> _testResults = new();
 
+    // Unified history state
+    private List<WebhookLog> _webhookHistory = new();
+    private string _historyFilterRuleId = "";
+    private bool _isLoadingHistory = false;
+
     /// <summary>
     /// Initializes the component and loads webhook rules.
     /// </summary>
     protected override async Task OnInitializedAsync()
     {
         await LoadDataAsync();
+        await LoadHistoryAsync();
+
+        // Subscribe to webhook notifications for live updates
+        WebhookNotificationService.OnWebhookFired += HandleWebhookFired;
+    }
+
+    /// <summary>
+    /// Handles webhook fired notifications for live updates.
+    /// </summary>
+    private void HandleWebhookFired(WebhookLogNotification notification)
+    {
+        InvokeAsync(() =>
+        {
+            // Check if this notification matches our current filter
+            var filterRuleId = string.IsNullOrEmpty(_historyFilterRuleId) ? (int?)null : int.Parse(_historyFilterRuleId);
+            if (filterRuleId.HasValue && filterRuleId.Value != notification.RuleId)
+            {
+                return; // Doesn't match filter
+            }
+
+            // Find the rule to include in the log entry
+            var rule = _rules.FirstOrDefault(r => r.Id == notification.RuleId);
+
+            // Create a new log entry from the notification
+            var newLog = new WebhookLog
+            {
+                Id = notification.LogId,
+                WebhookRuleId = notification.RuleId,
+                WebhookRule = rule,
+                Success = notification.Success,
+                EventDescription = notification.EventDescription,
+                ErrorMessage = notification.ErrorMessage,
+                TriggeredAt = notification.TriggeredAt
+            };
+
+            // Insert at the beginning (most recent first)
+            _webhookHistory.Insert(0, newLog);
+
+            // Keep only the last 100 entries
+            if (_webhookHistory.Count > 100)
+            {
+                _webhookHistory.RemoveAt(_webhookHistory.Count - 1);
+            }
+
+            StateHasChanged();
+        });
     }
 
     /// <summary>
@@ -710,6 +835,68 @@
         }
 
         return url.Substring(0, 47) + "...";
+    }
+
+    /// <summary>
+    /// Loads webhook history with optional filtering.
+    /// </summary>
+    private async Task LoadHistoryAsync()
+    {
+        _isLoadingHistory = true;
+        StateHasChanged();
+
+        try
+        {
+            int? ruleId = string.IsNullOrEmpty(_historyFilterRuleId) ? null : int.Parse(_historyFilterRuleId);
+            _webhookHistory = await WebhookRuleService.GetAllLogsAsync(ruleId, 100);
+        }
+        catch (Exception ex)
+        {
+            _webhookHistory = new List<WebhookLog>();
+            Console.WriteLine($"Error loading history: {ex.Message}");
+        }
+        finally
+        {
+            _isLoadingHistory = false;
+        }
+    }
+
+    /// <summary>
+    /// Formats a time as relative (e.g., "5 min ago").
+    /// </summary>
+    private static string FormatTimeAgo(DateTime utcTime)
+    {
+        var elapsed = DateTime.UtcNow - utcTime;
+
+        if (elapsed.TotalMinutes < 1)
+            return "just now";
+        if (elapsed.TotalMinutes < 60)
+            return $"{(int)elapsed.TotalMinutes}m ago";
+        if (elapsed.TotalHours < 24)
+            return $"{(int)elapsed.TotalHours}h ago";
+        if (elapsed.TotalDays < 7)
+            return $"{(int)elapsed.TotalDays}d ago";
+
+        return utcTime.ToLocalTime().ToString("MMM d");
+    }
+
+    /// <summary>
+    /// Truncates an error message for display.
+    /// </summary>
+    private static string TruncateError(string error)
+    {
+        if (string.IsNullOrEmpty(error))
+            return string.Empty;
+
+        return error.Length <= 40 ? error : error.Substring(0, 37) + "...";
+    }
+
+    /// <summary>
+    /// Unsubscribes from webhook notifications.
+    /// </summary>
+    public void Dispose()
+    {
+        WebhookNotificationService.OnWebhookFired -= HandleWebhookFired;
     }
 
     /// <summary>

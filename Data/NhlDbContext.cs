@@ -32,6 +32,11 @@ public class NhlDbContext : DbContext
     public DbSet<ProcessedEvent> ProcessedEvents { get; set; }
 
     /// <summary>
+    /// Gets or sets the webhook log records for history tracking.
+    /// </summary>
+    public DbSet<WebhookLog> WebhookLogs { get; set; }
+
+    /// <summary>
     /// Configures the entity models and relationships.
     /// </summary>
     /// <param name="modelBuilder">The model builder instance.</param>
@@ -73,6 +78,24 @@ public class NhlDbContext : DbContext
         {
             // Index for querying enabled rules by team and event type
             entity.HasIndex(e => new { e.IsEnabled, e.TeamAbbrev, e.EventType });
+        });
+
+        modelBuilder.Entity<WebhookLog>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.EventType).HasConversion<int>();
+            entity.Property(e => e.ErrorMessage).HasMaxLength(1000);
+            entity.Property(e => e.EventDescription).HasMaxLength(500);
+
+            // Foreign key to WebhookRule
+            entity.HasOne(e => e.WebhookRule)
+                .WithMany()
+                .HasForeignKey(e => e.WebhookRuleId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Index for querying by rule and cleanup by date
+            entity.HasIndex(e => e.WebhookRuleId);
+            entity.HasIndex(e => e.TriggeredAt);
         });
     }
 }

@@ -396,6 +396,258 @@ select.form-control {
     50% { opacity: 0.7; }
 }
 
+/* ==========================================================================
+   Pre-Game Countdown
+   ========================================================================== */
+.next-game-countdown {
+    margin-top: var(--spacing-lg);
+}
+
+.next-game-link {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    border-radius: var(--radius-lg);
+}
+
+.next-game-link:hover {
+    transform: translateY(-2px);
+}
+
+.next-game-link:hover .pregame-countdown {
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.pregame-countdown {
+    background: linear-gradient(135deg, var(--bg-secondary), var(--bg-tertiary));
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-xl);
+    margin-top: var(--spacing-lg);
+    text-align: center;
+}
+
+.countdown-header {
+    margin-bottom: var(--spacing-md);
+}
+
+.countdown-label {
+    font-size: 0.875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+}
+
+.countdown-timer {
+    display: flex;
+    justify-content: center;
+    align-items: baseline;
+    gap: var(--spacing-xs);
+    margin-bottom: var(--spacing-lg);
+}
+
+.countdown-unit {
+    display: inline-flex;
+    align-items: baseline;
+}
+
+.countdown-value {
+    font-family: var(--font-mono);
+    font-size: 3rem;
+    font-weight: 700;
+    color: var(--team-primary);
+    letter-spacing: -0.02em;
+}
+
+.countdown-suffix {
+    font-family: var(--font-mono);
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-right: var(--spacing-sm);
+}
+
+.pregame-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+    padding-bottom: var(--spacing-lg);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.game-time-local,
+.venue-info {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+}
+
+.time-icon,
+.venue-icon {
+    font-size: 1rem;
+}
+
+.team-records-preview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+}
+
+.team-record-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.team-record-item .record-details {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.team-record-item.home .record-details {
+    align-items: flex-end;
+}
+
+.team-record-item .team-abbrev {
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+.team-record-item .record-text {
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.team-record-item .streak {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.125rem 0.375rem;
+    border-radius: var(--radius-sm);
+}
+
+.team-record-item .streak.streak-win {
+    background: rgba(76, 175, 80, 0.2);
+    color: var(--success);
+}
+
+.team-record-item .streak.streak-loss {
+    background: rgba(244, 67, 54, 0.2);
+    color: var(--danger);
+}
+
+.vs-text {
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    padding: 0 var(--spacing-sm);
+}
+
+.season-series {
+    margin-top: var(--spacing-lg);
+    padding-top: var(--spacing-lg);
+    border-top: 1px solid var(--border-color);
+}
+
+.season-series .section-header {
+    margin-bottom: var(--spacing-md);
+}
+
+.season-series h4 {
+    font-size: 0.875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+.series-record {
+    display: flex;
+    justify-content: center;
+    gap: var(--spacing-md);
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: var(--spacing-md);
+}
+
+.series-divider {
+    color: var(--text-muted);
+}
+
+.series-games {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.series-game {
+    display: flex;
+    justify-content: center;
+    gap: var(--spacing-md);
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+}
+
+.series-date {
+    color: var(--text-muted);
+    min-width: 50px;
+}
+
+.series-score {
+    font-family: var(--font-mono);
+}
+
+.series-score.away-won {
+    color: var(--text-primary);
+}
+
+.series-score.home-won {
+    color: var(--team-primary);
+}
+
+.starting-soon-alert {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-lg);
+    padding: var(--spacing-sm) var(--spacing-lg);
+    background: rgba(255, 152, 0, 0.15);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-md);
+    color: var(--warning);
+    font-weight: 600;
+    animation: pulse 2s infinite;
+}
+
+.pulse-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--warning);
+    border-radius: 50%;
+    animation: pulse-dot 1.5s infinite;
+}
+
+@keyframes pulse-dot {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 0.7;
+    }
+}
+
 /* Player Stats Grid */
 .stats-grid {
     display: grid;
@@ -1247,6 +1499,150 @@ select.form-control {
     background-color: rgba(244, 67, 54, 0.1);
     color: var(--danger);
     border: 1px solid var(--danger);
+}
+
+/* Webhook History Section */
+.history-section {
+    margin-top: var(--spacing-xl);
+    padding-top: var(--spacing-xl);
+    border-top: 1px solid var(--border-color);
+}
+
+.history-section .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+}
+
+.history-section .section-header h2 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.history-filter select {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    min-width: 200px;
+}
+
+.history-loading {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    padding: var(--spacing-lg);
+    text-align: center;
+}
+
+.history-empty {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    font-style: italic;
+    padding: var(--spacing-lg);
+    text-align: center;
+    background-color: var(--bg-card);
+    border-radius: var(--radius-md);
+}
+
+.history-table-container {
+    overflow-x: auto;
+    background-color: var(--bg-card);
+    border-radius: var(--radius-md);
+}
+
+.history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.history-table thead {
+    background-color: var(--bg-tertiary);
+}
+
+.history-table th {
+    padding: var(--spacing-sm) var(--spacing-md);
+    text-align: left;
+    font-weight: 600;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.history-table td {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: middle;
+}
+
+.history-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.history-table tbody tr.success {
+    background-color: rgba(76, 175, 80, 0.03);
+}
+
+.history-table tbody tr.error {
+    background-color: rgba(244, 67, 54, 0.03);
+}
+
+.history-table tbody tr:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.history-table .col-status {
+    width: 60px;
+    text-align: center;
+}
+
+.history-table .col-webhook {
+    width: 180px;
+}
+
+.history-table .col-event {
+    min-width: 150px;
+}
+
+.history-table .col-time {
+    width: 100px;
+    color: var(--text-muted);
+}
+
+.history-table .col-error {
+    min-width: 150px;
+}
+
+.history-table .status-icon {
+    font-weight: bold;
+    font-size: 1rem;
+}
+
+.history-table tr.success .status-icon {
+    color: var(--success);
+}
+
+.history-table tr.error .status-icon {
+    color: var(--danger);
+}
+
+.history-table .webhook-info {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.history-table .error-text {
+    color: var(--danger);
+    font-size: 0.8rem;
+}
+
+.team-logo-xs {
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
 }
 
 /* Info Section */
@@ -2337,6 +2733,129 @@ a:focus-visible {
     text-align: right;
 }
 
+/* Danger Zone Markers */
+.shot-chart .shot-marker.danger-high {
+    box-shadow: 0 0 6px #ef4444;
+}
+
+.shot-chart .shot-marker.danger-medium {
+    box-shadow: 0 0 4px #f59e0b;
+}
+
+.shot-chart .shot-marker.danger-low {
+    opacity: 0.7;
+}
+
+/* Danger Zone Legend */
+.chart-legend .legend-divider {
+    color: var(--border-color);
+    margin: 0 var(--spacing-xs);
+}
+
+.chart-legend .danger-marker {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.chart-legend .danger-marker.high {
+    background-color: #ef4444;
+    box-shadow: 0 0 4px #ef4444;
+}
+
+.chart-legend .danger-marker.medium {
+    background-color: #f59e0b;
+}
+
+.chart-legend .danger-marker.low {
+    background-color: #3b82f6;
+    opacity: 0.7;
+}
+
+/* xG Value Display */
+.team-shots .xg-value {
+    font-size: 0.75rem;
+    color: var(--warning);
+    font-family: var(--font-mono);
+    font-weight: 600;
+}
+
+/* Danger Zone Stats */
+.danger-zone-stats {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-md);
+    background-color: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    margin-top: var(--spacing-sm);
+    font-size: 0.8rem;
+}
+
+.danger-stat-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: var(--spacing-md);
+}
+
+.danger-stat-row .stat-label {
+    color: var(--text-muted);
+    min-width: 150px;
+    text-align: right;
+}
+
+.danger-stat-row .stat-value {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    min-width: 30px;
+    text-align: center;
+}
+
+.danger-stat-row .stat-value.away {
+    color: var(--text-primary);
+}
+
+.danger-stat-row .stat-value.home {
+    color: var(--team-primary);
+}
+
+.danger-stat-row .stat-divider {
+    color: var(--text-muted);
+}
+
+/* Chart controls flex wrap */
+.shot-chart .chart-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+@media (max-width: 768px) {
+    .danger-zone-stats {
+        font-size: 0.75rem;
+    }
+
+    .danger-stat-row .stat-label {
+        min-width: 100px;
+        font-size: 0.7rem;
+    }
+
+    .shot-chart .chart-controls {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .shot-chart .chart-controls select {
+        width: 100%;
+    }
+
+    .chart-legend {
+        flex-wrap: wrap;
+        gap: var(--spacing-sm);
+    }
+}
+
 /* ==========================================================================
    Standings Page Styles
    ========================================================================== */
@@ -3262,6 +3781,55 @@ a:focus-visible {
     color: var(--danger);
 }
 
+/* Magic and Elimination Numbers */
+.magic-number {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.125rem 0.5rem;
+    border-radius: var(--radius-sm);
+    background: rgba(40, 167, 69, 0.15);
+    color: var(--success);
+    margin-left: auto;
+    margin-right: var(--spacing-sm);
+}
+
+.clinched-badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.125rem 0.5rem;
+    border-radius: var(--radius-sm);
+    background: var(--success);
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-left: auto;
+    margin-right: var(--spacing-sm);
+}
+
+.elimination-number {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.125rem 0.5rem;
+    border-radius: var(--radius-sm);
+    background: rgba(220, 53, 69, 0.15);
+    color: var(--danger);
+    margin-left: auto;
+    margin-right: var(--spacing-sm);
+}
+
+.eliminated-badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.125rem 0.5rem;
+    border-radius: var(--radius-sm);
+    background: var(--danger);
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-left: auto;
+    margin-right: var(--spacing-sm);
+}
+
 /* ==========================================================================
    Team Page Responsive
    ========================================================================== */
@@ -3682,4 +4250,84 @@ a:focus-visible {
     font-size: 0.75rem;
     font-weight: 600;
     margin-left: var(--spacing-sm);
+}
+
+/* Live Game Badge for Standings */
+.live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    margin-left: var(--spacing-sm);
+    background-color: rgba(244, 67, 54, 0.15);
+    border: 1px solid var(--danger);
+    border-radius: var(--radius-sm);
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--danger);
+    text-decoration: none;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.2s ease;
+    vertical-align: middle;
+}
+
+.live-badge:hover {
+    background-color: var(--danger);
+    color: #fff;
+    text-decoration: none;
+}
+
+.live-badge.compact {
+    padding: 1px 6px;
+    font-size: 0.6rem;
+}
+
+.live-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background-color: var(--danger);
+    animation: live-pulse 1.5s infinite;
+}
+
+.live-badge:hover .live-dot {
+    background-color: #fff;
+}
+
+/* Inline version for playoff picture */
+.live-badge-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    margin-left: var(--spacing-xs);
+    background-color: rgba(244, 67, 54, 0.2);
+    border-radius: var(--radius-sm);
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: var(--danger);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.playoff-team-row.has-live-game {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 1px rgba(244, 67, 54, 0.3);
+}
+
+.playoff-team-row.has-live-game:hover {
+    border-color: var(--danger);
+    background-color: rgba(244, 67, 54, 0.1);
+}
+
+@keyframes live-pulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.5;
+        transform: scale(0.8);
+    }
 }

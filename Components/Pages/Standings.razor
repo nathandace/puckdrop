@@ -3,6 +3,7 @@
 @using PuckDrop.Services
 @inject INhlApiClient NhlApiClient
 @inject ITeamService TeamService
+@inject NavigationManager Navigation
 @rendermode InteractiveServer
 
 <PageTitle>NHL Monitor - Standings</PageTitle>
@@ -99,6 +100,10 @@
                     // Get the wild card cutoff points for "points back" calculation
                     var wcCutoffPoints = wildcardTeams.Any() ? wildcardTeams.Last().Points : 0;
 
+                    // Calculate magic numbers for teams in playoff position
+                    var allInTeams = divisionQualifiers.Select(d => d.Team).Concat(wildcardTeams).ToList();
+                    var lastOutTeam = bubbleTeams.FirstOrDefault() ?? outTeams.FirstOrDefault();
+
                     <div class="playoff-conference">
                         <h2 class="conference-header">@conference Conference</h2>
 
@@ -119,7 +124,8 @@
                                     @foreach (var (team, divRank, _) in divQualifiers)
                                     {
                                         var seedLabel = divRank == 1 ? "Leader" : $"#{divRank}";
-                                        @RenderPlayoffTeamRow(team, divRank, "division-qualifier", seedLabel)
+                                        var magicNumber = CalculateMagicNumber(team, lastOutTeam);
+                                        @RenderPlayoffTeamRowWithMagic(team, divRank, "division-qualifier", seedLabel, magicNumber)
                                     }
                                 </div>
                             }
@@ -132,7 +138,8 @@
                                 </div>
                                 @foreach (var (team, idx) in wildcardTeams.Select((t, i) => (t, i)))
                                 {
-                                    @RenderPlayoffTeamRow(team, null, "wildcard", $"WC{idx + 1}")
+                                    var magicNumber = CalculateMagicNumber(team, lastOutTeam);
+                                    @RenderPlayoffTeamRowWithMagic(team, null, "wildcard", $"WC{idx + 1}", magicNumber)
                                 }
                             </div>
 
@@ -145,7 +152,8 @@
                                 @foreach (var team in bubbleTeams)
                                 {
                                     var pointsBack = wcCutoffPoints - team.Points;
-                                    @RenderPlayoffTeamRow(team, null, "bubble", $"{pointsBack} PTS back")
+                                    var eliminationNumber = CalculateEliminationNumber(team, wildcardTeams.LastOrDefault());
+                                    @RenderPlayoffTeamRowWithElimination(team, null, "bubble", $"{pointsBack} PTS back", eliminationNumber)
                                 }
                             </div>
 
@@ -158,7 +166,8 @@
                                 @foreach (var team in outTeams)
                                 {
                                     var pointsBack = wcCutoffPoints - team.Points;
-                                    @RenderPlayoffTeamRow(team, null, "out", $"{pointsBack} PTS back")
+                                    var eliminationNumber = CalculateEliminationNumber(team, wildcardTeams.LastOrDefault());
+                                    @RenderPlayoffTeamRowWithElimination(team, null, "out", $"{pointsBack} PTS back", eliminationNumber)
                                 }
                             </div>
                         </div>
@@ -195,12 +204,20 @@
                             @foreach (var (team, index) in _standings.Standings.OrderByDescending(t => t.Points).ThenByDescending(t => t.PointPctg).Select((t, i) => (t, i)))
                             {
                                 var isFavorite = team.TeamAbbrev.Default == _favoriteTeam?.TeamAbbrev;
+                                var liveGame = GetLiveGameForTeam(team.TeamAbbrev.Default);
                                 <tr class="@(isFavorite ? "favorite-team" : "")">
                                     <td class="rank-col">@(index + 1)</td>
                                     <td class="team-col">
                                         <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="@team.TeamAbbrev.Default" class="team-logo-sm" />
                                         <span class="team-name">@team.TeamName.Default</span>
                                         <span class="team-abbrev">@team.TeamAbbrev.Default</span>
+                                        @if (liveGame != null)
+                                        {
+                                            <a href="/game/@liveGame.Id" class="live-badge" @onclick:stopPropagation="true">
+                                                <span class="live-dot"></span>
+                                                LIVE
+                                            </a>
+                                        }
                                     </td>
                                     <td>@team.GamesPlayed</td>
                                     <td class="win-col">@team.Wins</td>
@@ -299,6 +316,7 @@
 @code {
     private bool _isLoading = true;
     private StandingsResponse? _standings;
+    private ScoreboardResponse? _scoreboard;
     private Models.Domain.FavoriteTeam? _favoriteTeam;
     private ViewMode _viewMode = ViewMode.Playoffs;
 
@@ -306,9 +324,29 @@
 
     protected override async Task OnInitializedAsync()
     {
-        _favoriteTeam = await TeamService.GetFavoriteTeamAsync();
-        _standings = await NhlApiClient.GetStandingsAsync();
+        var favoriteTask = TeamService.GetFavoriteTeamAsync();
+        var standingsTask = NhlApiClient.GetStandingsAsync();
+        var scoreboardTask = NhlApiClient.GetScoreboardAsync();
+
+        await Task.WhenAll(favoriteTask, standingsTask, scoreboardTask);
+
+        _favoriteTeam = favoriteTask.Result;
+        _standings = standingsTask.Result;
+        _scoreboard = scoreboardTask.Result;
         _isLoading = false;
+    }
+
+    private ScoreboardGame? GetLiveGameForTeam(string teamAbbrev)
+    {
+        if (_scoreboard?.Games == null) return null;
+        return _scoreboard.Games.FirstOrDefault(g =>
+            (g.GameState is "LIVE" or "CRIT") &&
+            (g.AwayTeam.Abbrev == teamAbbrev || g.HomeTeam.Abbrev == teamAbbrev));
+    }
+
+    private void NavigateToGame(int gameId)
+    {
+        Navigation.NavigateTo($"/game/{gameId}");
     }
 
     private RenderFragment RenderStandingsTable(IEnumerable<TeamStanding> teams) => __builder =>
@@ -334,11 +372,19 @@
                 {
                     index++;
                     var isFavorite = team.TeamAbbrev.Default == _favoriteTeam?.TeamAbbrev;
+                    var liveGame = GetLiveGameForTeam(team.TeamAbbrev.Default);
                     <tr class="@(isFavorite ? "favorite-team" : "")">
                         <td class="rank-col">@index</td>
                         <td class="team-col">
                             <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="@team.TeamAbbrev.Default" class="team-logo-sm" />
                             <span class="team-name">@team.TeamName.Default</span>
+                            @if (liveGame != null)
+                            {
+                                <a href="/game/@liveGame.Id" class="live-badge" @onclick:stopPropagation="true">
+                                    <span class="live-dot"></span>
+                                    LIVE
+                                </a>
+                            }
                         </td>
                         <td>@team.GamesPlayed</td>
                         <td class="win-col">@team.Wins</td>
@@ -373,11 +419,19 @@
                 {
                     index++;
                     var isFavorite = team.TeamAbbrev.Default == _favoriteTeam?.TeamAbbrev;
+                    var liveGame = GetLiveGameForTeam(team.TeamAbbrev.Default);
                     var showLine = showWildcardLine && index == 3; // Line after 2nd wild card spot
                     <tr class="@(isFavorite ? "favorite-team" : "") @(showLine ? "wildcard-cutoff" : "")">
                         <td class="team-col">
                             <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="@team.TeamAbbrev.Default" class="team-logo-sm" />
                             <span class="team-abbrev">@team.TeamAbbrev.Default</span>
+                            @if (liveGame != null)
+                            {
+                                <a href="/game/@liveGame.Id" class="live-badge compact" @onclick:stopPropagation="true">
+                                    <span class="live-dot"></span>
+                                    LIVE
+                                </a>
+                            }
                         </td>
                         <td>@team.GamesPlayed</td>
                         <td>@team.Wins</td>
@@ -419,7 +473,8 @@
     private RenderFragment RenderPlayoffTeamRow(TeamStanding team, int? seed, string statusClass, string label) => __builder =>
     {
         var isFavorite = team.TeamAbbrev.Default == _favoriteTeam?.TeamAbbrev;
-        <a href="/team/@team.TeamAbbrev.Default" class="playoff-team-row @statusClass @(isFavorite ? "favorite-team" : "")">
+        var liveGame = GetLiveGameForTeam(team.TeamAbbrev.Default);
+        <a href="@(liveGame != null ? $"/game/{liveGame.Id}" : $"/team/{team.TeamAbbrev.Default}")" class="playoff-team-row @statusClass @(isFavorite ? "favorite-team" : "") @(liveGame != null ? "has-live-game" : "")">
             @if (seed.HasValue)
             {
                 <span class="playoff-seed">@seed</span>
@@ -430,9 +485,124 @@
             }
             <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="@team.TeamAbbrev.Default" class="team-logo-sm" />
             <span class="team-name">@team.TeamAbbrev.Default</span>
+            @if (liveGame != null)
+            {
+                <span class="live-badge-inline">
+                    <span class="live-dot"></span>
+                    LIVE
+                </span>
+            }
             <span class="team-record">@team.Wins-@team.Losses-@team.OtLosses</span>
             <span class="team-points">@team.Points PTS</span>
             <span class="playoff-label">@label</span>
         </a>
     };
+
+    private RenderFragment RenderPlayoffTeamRowWithMagic(TeamStanding team, int? seed, string statusClass, string label, int? magicNumber) => __builder =>
+    {
+        var isFavorite = team.TeamAbbrev.Default == _favoriteTeam?.TeamAbbrev;
+        var liveGame = GetLiveGameForTeam(team.TeamAbbrev.Default);
+        <a href="@(liveGame != null ? $"/game/{liveGame.Id}" : $"/team/{team.TeamAbbrev.Default}")" class="playoff-team-row @statusClass @(isFavorite ? "favorite-team" : "") @(liveGame != null ? "has-live-game" : "")">
+            @if (seed.HasValue)
+            {
+                <span class="playoff-seed">@seed</span>
+            }
+            else
+            {
+                <span class="playoff-seed empty"></span>
+            }
+            <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="@team.TeamAbbrev.Default" class="team-logo-sm" />
+            <span class="team-name">@team.TeamAbbrev.Default</span>
+            @if (liveGame != null)
+            {
+                <span class="live-badge-inline">
+                    <span class="live-dot"></span>
+                    LIVE
+                </span>
+            }
+            <span class="team-record">@team.Wins-@team.Losses-@team.OtLosses</span>
+            <span class="team-points">@team.Points PTS</span>
+            @if (magicNumber.HasValue && magicNumber.Value > 0)
+            {
+                <span class="magic-number" title="Magic number to clinch playoff spot">M: @magicNumber</span>
+            }
+            else if (magicNumber.HasValue && magicNumber.Value <= 0)
+            {
+                <span class="clinched-badge" title="Clinched playoff spot">CLINCHED</span>
+            }
+            <span class="playoff-label">@label</span>
+        </a>
+    };
+
+    private RenderFragment RenderPlayoffTeamRowWithElimination(TeamStanding team, int? seed, string statusClass, string label, int? eliminationNumber) => __builder =>
+    {
+        var isFavorite = team.TeamAbbrev.Default == _favoriteTeam?.TeamAbbrev;
+        var liveGame = GetLiveGameForTeam(team.TeamAbbrev.Default);
+        <a href="@(liveGame != null ? $"/game/{liveGame.Id}" : $"/team/{team.TeamAbbrev.Default}")" class="playoff-team-row @statusClass @(isFavorite ? "favorite-team" : "") @(liveGame != null ? "has-live-game" : "")">
+            @if (seed.HasValue)
+            {
+                <span class="playoff-seed">@seed</span>
+            }
+            else
+            {
+                <span class="playoff-seed empty"></span>
+            }
+            <img src="@TeamLogoHelper.GetLogoUrl(team.TeamAbbrev.Default)" alt="@team.TeamAbbrev.Default" class="team-logo-sm" />
+            <span class="team-name">@team.TeamAbbrev.Default</span>
+            @if (liveGame != null)
+            {
+                <span class="live-badge-inline">
+                    <span class="live-dot"></span>
+                    LIVE
+                </span>
+            }
+            <span class="team-record">@team.Wins-@team.Losses-@team.OtLosses</span>
+            <span class="team-points">@team.Points PTS</span>
+            @if (eliminationNumber.HasValue && eliminationNumber.Value > 0)
+            {
+                <span class="elimination-number" title="Elimination number">E: @eliminationNumber</span>
+            }
+            else if (eliminationNumber.HasValue && eliminationNumber.Value <= 0)
+            {
+                <span class="eliminated-badge" title="Eliminated from playoff contention">ELIMINATED</span>
+            }
+            <span class="playoff-label">@label</span>
+        </a>
+    };
+
+    /// <summary>
+    /// Calculates the magic number for a team to clinch a playoff spot.
+    /// Magic Number = Games Remaining for Chasing Team + 1 + Point Difference
+    /// When Magic Number reaches 0 or less, team has clinched.
+    /// </summary>
+    private int? CalculateMagicNumber(TeamStanding inTeam, TeamStanding? chasingTeam)
+    {
+        if (chasingTeam == null)
+            return null;
+
+        const int totalGames = 82;
+        var chasingGamesRemaining = totalGames - chasingTeam.GamesPlayed;
+        var chasingMaxPoints = chasingTeam.Points + (chasingGamesRemaining * 2);
+        var magicNumber = chasingMaxPoints - inTeam.Points + 1;
+
+        return magicNumber;
+    }
+
+    /// <summary>
+    /// Calculates the elimination number for a team outside playoff position.
+    /// Elimination Number = Games Remaining + 1 - Point Difference from cutoff team
+    /// When Elimination Number reaches 0 or less, team is eliminated.
+    /// </summary>
+    private int? CalculateEliminationNumber(TeamStanding outTeam, TeamStanding? cutoffTeam)
+    {
+        if (cutoffTeam == null)
+            return null;
+
+        const int totalGames = 82;
+        var outGamesRemaining = totalGames - outTeam.GamesPlayed;
+        var outMaxPoints = outTeam.Points + (outGamesRemaining * 2);
+        var eliminationNumber = outMaxPoints - cutoffTeam.Points + 1;
+
+        return eliminationNumber;
+    }
 }

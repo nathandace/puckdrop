@@ -1,11 +1,17 @@
 @using PuckDrop.Models.Api
+@using PuckDrop.Helpers
 @inject IJSRuntime JS
 
 <div class="shot-chart">
     <div class="section-header">
         <h3>Shot Chart</h3>
         <div class="chart-controls">
-            <select class="form-control form-control-sm" @bind="_selectedPlayerId">
+            <select class="form-control form-control-sm" @bind="_selectedTeamFilter" style="width: auto; margin-right: 0.5rem;">
+                <option value="all">Both Teams</option>
+                <option value="away">@AwayTeamAbbrev</option>
+                <option value="home">@HomeTeamAbbrev</option>
+            </select>
+            <select class="form-control form-control-sm" @bind="_selectedPlayerId" style="width: auto; margin-right: 0.5rem;">
                 <option value="0">All Players</option>
                 @if (RosterSpots != null)
                 {
@@ -13,7 +19,7 @@
                     var awayShooters = shooters.Where(s => s.TeamId == AwayTeamId).OrderBy(s => s.Name);
                     var homeShooters = shooters.Where(s => s.TeamId == HomeTeamId).OrderBy(s => s.Name);
 
-                    @if (awayShooters.Any())
+                    @if (awayShooters.Any() && _selectedTeamFilter != "home")
                     {
                         <optgroup label="@AwayTeamAbbrev">
                             @foreach (var shooter in awayShooters)
@@ -22,7 +28,7 @@
                             }
                         </optgroup>
                     }
-                    @if (homeShooters.Any())
+                    @if (homeShooters.Any() && _selectedTeamFilter != "away")
                     {
                         <optgroup label="@HomeTeamAbbrev">
                             @foreach (var shooter in homeShooters)
@@ -33,13 +39,25 @@
                     }
                 }
             </select>
+            <select class="form-control form-control-sm" @bind="_dangerZoneFilter" style="width: auto;">
+                <option value="all">All Zones</option>
+                <option value="high">High Danger</option>
+                <option value="medium">Medium Danger</option>
+                <option value="low">Low Danger</option>
+            </select>
         </div>
     </div>
+
+    <!-- Danger Zone Legend -->
     <div class="chart-legend">
         <span class="legend-item"><span class="marker goal"></span> Goal</span>
         <span class="legend-item"><span class="marker shot"></span> Save</span>
         <span class="legend-item"><span class="marker miss"></span> Miss</span>
         <span class="legend-item"><span class="marker block"></span> Block</span>
+        <span class="legend-divider">|</span>
+        <span class="legend-item"><span class="danger-marker high"></span> High Danger</span>
+        <span class="legend-item"><span class="danger-marker medium"></span> Medium</span>
+        <span class="legend-item"><span class="danger-marker low"></span> Low</span>
     </div>
 
     <div class="chart-container">
@@ -86,29 +104,65 @@
                     var (x, y) = TransformCoordinates(play);
                     var markerClass = GetMarkerClass(play);
                     var teamClass = GetTeamClass(play);
+                    var dangerClass = GetDangerClass(play);
+                    var xg = ShotAnalytics.CalculateXg(play);
 
-                    <div class="shot-marker @markerClass @teamClass"
+                    <div class="shot-marker @markerClass @teamClass @dangerClass"
                          style="left: @(x.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))%; top: @(y.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))%;"
-                         title="@GetTooltip(play)">
+                         title="@GetTooltip(play, xg)">
                     </div>
                 }
             }
         </div>
     </div>
 
+    <!-- Shot Analytics Summary -->
     <div class="chart-stats">
         <div class="team-shots away">
             <span class="team-abbrev">@AwayTeamAbbrev</span>
-            <span class="shot-count">@AwayShots shots</span>
+            <span class="shot-count">@AwayShots SOG</span>
+            @if (_awayAnalytics != null)
+            {
+                <span class="xg-value" title="Expected Goals">xG: @_awayAnalytics.TotalXg.ToString("F2")</span>
+            }
         </div>
         <div class="chart-info">
-            <span class="text-muted">@PlottedShots plotted</span>
+            <span class="text-muted">@PlottedShots shots plotted</span>
         </div>
         <div class="team-shots home">
             <span class="team-abbrev">@HomeTeamAbbrev</span>
-            <span class="shot-count">@HomeShots shots</span>
+            <span class="shot-count">@HomeShots SOG</span>
+            @if (_homeAnalytics != null)
+            {
+                <span class="xg-value" title="Expected Goals">xG: @_homeAnalytics.TotalXg.ToString("F2")</span>
+            }
         </div>
     </div>
+
+    <!-- Danger Zone Breakdown -->
+    @if (_awayAnalytics != null && _homeAnalytics != null)
+    {
+        <div class="danger-zone-stats">
+            <div class="danger-stat-row">
+                <span class="stat-label">High Danger Chances</span>
+                <span class="stat-value away">@_awayAnalytics.HighDangerChances</span>
+                <span class="stat-divider">-</span>
+                <span class="stat-value home">@_homeAnalytics.HighDangerChances</span>
+            </div>
+            <div class="danger-stat-row">
+                <span class="stat-label">Corsi (All Attempts)</span>
+                <span class="stat-value away">@_awayAnalytics.Corsi</span>
+                <span class="stat-divider">-</span>
+                <span class="stat-value home">@_homeAnalytics.Corsi</span>
+            </div>
+            <div class="danger-stat-row">
+                <span class="stat-label">Fenwick (Unblocked)</span>
+                <span class="stat-value away">@_awayAnalytics.Fenwick</span>
+                <span class="stat-divider">-</span>
+                <span class="stat-value home">@_homeAnalytics.Fenwick</span>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
@@ -131,10 +185,24 @@
     public List<RosterSpot>? RosterSpots { get; set; }
 
     private int _selectedPlayerId;
+    private string _selectedTeamFilter = "all";
+    private string _dangerZoneFilter = "all";
+    private ShotAnalyticsResult? _awayAnalytics;
+    private ShotAnalyticsResult? _homeAnalytics;
 
-    private int AwayShots => GetFilteredShotPlays().Count(p => p.Details?.EventOwnerTeamId == AwayTeamId);
-    private int HomeShots => GetFilteredShotPlays().Count(p => p.Details?.EventOwnerTeamId == HomeTeamId);
+    private int AwayShots => GetFilteredShotPlays().Count(p => p.Details?.EventOwnerTeamId == AwayTeamId && p.TypeDescKey is "shot-on-goal" or "goal");
+    private int HomeShots => GetFilteredShotPlays().Count(p => p.Details?.EventOwnerTeamId == HomeTeamId && p.TypeDescKey is "shot-on-goal" or "goal");
     private int PlottedShots => GetFilteredShotPlays().Count();
+
+    protected override void OnParametersSet()
+    {
+        // Recalculate analytics when plays change
+        if (Plays != null)
+        {
+            _awayAnalytics = ShotAnalytics.CalculateAggregateAnalytics(Plays, AwayTeamId);
+            _homeAnalytics = ShotAnalytics.CalculateAggregateAnalytics(Plays, HomeTeamId);
+        }
+    }
 
     private IEnumerable<Play> GetShotPlays()
     {
@@ -145,8 +213,34 @@
     private IEnumerable<Play> GetFilteredShotPlays()
     {
         var shots = GetShotPlays();
-        if (_selectedPlayerId == 0) return shots;
-        return shots.Where(p => GetShooterId(p) == _selectedPlayerId);
+
+        // Filter by team
+        if (_selectedTeamFilter == "away")
+            shots = shots.Where(p => p.Details?.EventOwnerTeamId == AwayTeamId);
+        else if (_selectedTeamFilter == "home")
+            shots = shots.Where(p => p.Details?.EventOwnerTeamId == HomeTeamId);
+
+        // Filter by player
+        if (_selectedPlayerId != 0)
+            shots = shots.Where(p => GetShooterId(p) == _selectedPlayerId);
+
+        // Filter by danger zone
+        if (_dangerZoneFilter != "all")
+        {
+            shots = shots.Where(p =>
+            {
+                var zone = ShotAnalytics.GetDangerZone(p);
+                return _dangerZoneFilter switch
+                {
+                    "high" => zone == ShotAnalytics.DangerZone.High,
+                    "medium" => zone == ShotAnalytics.DangerZone.Medium,
+                    "low" => zone == ShotAnalytics.DangerZone.Low,
+                    _ => true
+                };
+            });
+        }
+
+        return shots;
     }
 
     private static int? GetShooterId(Play play)
@@ -233,7 +327,19 @@
         return "";
     }
 
-    private string GetTooltip(Play play)
+    private static string GetDangerClass(Play play)
+    {
+        var zone = ShotAnalytics.GetDangerZone(play);
+        return zone switch
+        {
+            ShotAnalytics.DangerZone.High => "danger-high",
+            ShotAnalytics.DangerZone.Medium => "danger-medium",
+            ShotAnalytics.DangerZone.Low => "danger-low",
+            _ => ""
+        };
+    }
+
+    private string GetTooltip(Play play, double? xg = null)
     {
         var type = play.TypeDescKey switch
         {
@@ -245,6 +351,22 @@
         };
 
         var team = play.Details?.EventOwnerTeamId == HomeTeamId ? HomeTeamAbbrev : AwayTeamAbbrev;
-        return $"{type} - {team} ({play.TimeInPeriod} P{play.PeriodDescriptor.Number})";
+        var zone = ShotAnalytics.GetDangerZone(play);
+        var zoneName = ShotAnalytics.GetDangerZoneName(zone);
+        var distance = ShotAnalytics.CalculateDistanceToGoal(play);
+
+        var tooltip = $"{type} - {team} ({play.TimeInPeriod} P{play.PeriodDescriptor.Number})";
+        tooltip += $"\n{zoneName}";
+
+        if (distance.HasValue)
+            tooltip += $" ({distance.Value:F0} ft)";
+
+        if (xg.HasValue)
+            tooltip += $"\nxG: {xg.Value:F3}";
+
+        if (!string.IsNullOrEmpty(play.Details?.ShotType))
+            tooltip += $"\nShot Type: {play.Details.ShotType}";
+
+        return tooltip;
     }
 }

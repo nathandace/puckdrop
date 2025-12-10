@@ -137,7 +137,7 @@ public class ScoreboardGoal
     public TeamName? LastName { get; set; }
 
     [JsonPropertyName("teamAbbrev")]
-    public TeamName? TeamAbbrev { get; set; }
+    public string? TeamAbbrev { get; set; }
 
     [JsonPropertyName("goalsToDate")]
     public int? GoalsToDate { get; set; }

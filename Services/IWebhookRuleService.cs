@@ -61,4 +61,39 @@ public interface IWebhookRuleService
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>List of team abbreviations.</returns>
     Task<List<string>> GetTeamsWithEnabledRulesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets all enabled rules for a team, grouped by event type.
+    /// Optimized for batch processing to reduce database round-trips.
+    /// </summary>
+    /// <param name="teamAbbrev">The team abbreviation.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Dictionary mapping event types to their enabled rules.</returns>
+    Task<Dictionary<WebhookEventType, List<WebhookRule>>> GetAllEnabledRulesForTeamAsync(string teamAbbrev, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets webhook logs for a specific rule.
+    /// </summary>
+    /// <param name="ruleId">The rule ID.</param>
+    /// <param name="limit">Maximum number of logs to return.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of webhook logs.</returns>
+    Task<List<WebhookLog>> GetLogsForRuleAsync(int ruleId, int limit = 50, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets all webhook logs with optional filtering.
+    /// </summary>
+    /// <param name="ruleId">Optional rule ID to filter by.</param>
+    /// <param name="limit">Maximum number of logs to return.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of webhook logs with rule information.</returns>
+    Task<List<WebhookLog>> GetAllLogsAsync(int? ruleId = null, int limit = 100, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Cleans up webhook logs older than the specified number of days.
+    /// </summary>
+    /// <param name="daysToKeep">Number of days of logs to keep.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Number of logs deleted.</returns>
+    Task<int> CleanupOldLogsAsync(int daysToKeep = 14, CancellationToken cancellationToken = default);
 }

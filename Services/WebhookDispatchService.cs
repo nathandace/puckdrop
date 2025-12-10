@@ -16,6 +16,7 @@ public class WebhookDispatchService : IWebhookDispatchService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IDbContextFactory<NhlDbContext> _dbContextFactory;
+    private readonly IWebhookNotificationService _notificationService;
     private readonly ILogger<WebhookDispatchService> _logger;
 
     private const int MaxRetries = 3;
@@ -33,14 +34,17 @@ public class WebhookDispatchService : IWebhookDispatchService
     /// </summary>
     /// <param name="httpClientFactory">The HTTP client factory.</param>
     /// <param name="dbContextFactory">The database context factory.</param>
+    /// <param name="notificationService">The webhook notification service.</param>
     /// <param name="logger">The logger.</param>
     public WebhookDispatchService(
         IHttpClientFactory httpClientFactory,
         IDbContextFactory<NhlDbContext> dbContextFactory,
+        IWebhookNotificationService notificationService,
         ILogger<WebhookDispatchService> logger)
     {
         _httpClientFactory = httpClientFactory;
         _dbContextFactory = dbContextFactory;
+        _notificationService = notificationService;
         _logger = logger;
     }
 
@@ -63,7 +67,12 @@ public class WebhookDispatchService : IWebhookDispatchService
             ? ApplyCustomTemplate(rule.CustomPayloadTemplate, payload)
             : FormatPayload(rule.PayloadFormat, payload);
 
-        return await SendWithRetryAsync(rule.TargetUrl, formattedPayload, cancellationToken);
+        var (success, statusCode, errorMessage) = await SendWithRetryAndStatusAsync(rule.TargetUrl, formattedPayload, cancellationToken);
+
+        // Log the webhook attempt
+        await LogWebhookAsync(rule, payload, success, statusCode, errorMessage, cancellationToken);
+
+        return success;
     }
 
     /// <inheritdoc />
@@ -96,7 +105,8 @@ public class WebhookDispatchService : IWebhookDispatchService
             ? ApplyCustomTemplate(rule.CustomPayloadTemplate, testPayload)
             : FormatPayload(rule.PayloadFormat, testPayload);
 
-        return await SendWithRetryAsync(rule.TargetUrl, formattedPayload, cancellationToken);
+        var (success, _, _) = await SendWithRetryAndStatusAsync(rule.TargetUrl, formattedPayload, cancellationToken);
+        return success;
     }
 
     /// <summary>
@@ -304,22 +314,117 @@ public class WebhookDispatchService : IWebhookDispatchService
     }
 
     /// <summary>
-    /// Sends a webhook with retry logic.
+    /// Logs a webhook attempt to the database and sends a real-time notification.
+    /// </summary>
+    private async Task LogWebhookAsync(
+        WebhookRule rule,
+        WebhookPayload payload,
+        bool success,
+        int? statusCode,
+        string? errorMessage,
+        CancellationToken cancellationToken)
+    {
+        var eventDescription = BuildEventDescription(payload);
+        var triggeredAt = DateTime.UtcNow;
+        int logId = 0;
+
+        try
+        {
+            await using var context = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
+
+            var log = new WebhookLog
+            {
+                WebhookRuleId = rule.Id,
+                EventType = rule.EventType,
+                GameId = payload.GameId > 0 ? payload.GameId : null,
+                Success = success,
+                HttpStatusCode = statusCode,
+                ErrorMessage = errorMessage,
+                TriggeredAt = triggeredAt,
+                EventDescription = eventDescription
+            };
+
+            context.WebhookLogs.Add(log);
+            await context.SaveChangesAsync(cancellationToken);
+            logId = log.Id;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to log webhook attempt for rule {RuleId}", rule.Id);
+        }
+
+        // Send real-time notification to connected clients
+        try
+        {
+            var notification = new WebhookLogNotification
+            {
+                RuleId = rule.Id,
+                LogId = logId,
+                Success = success,
+                EventDescription = eventDescription,
+                ErrorMessage = errorMessage,
+                TriggeredAt = triggeredAt
+            };
+
+            await _notificationService.NotifyWebhookFiredAsync(notification, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send webhook notification for rule {RuleId}", rule.Id);
+        }
+    }
+
+    /// <summary>
+    /// Builds a brief event description for logging.
+    /// </summary>
+    private static string BuildEventDescription(WebhookPayload payload)
+    {
+        var team = payload.Details?.Team ?? "";
+        var player = payload.Details?.Player ?? "";
+
+        return payload.EventType switch
+        {
+            "GoalScored" or "FavoriteTeamGoal" or "OpponentGoal" =>
+                !string.IsNullOrEmpty(player) ? $"Goal by {player}" : $"Goal ({team})",
+            "PenaltyCommitted" =>
+                !string.IsNullOrEmpty(player) ? $"Penalty: {player}" : $"Penalty ({team})",
+            "PowerPlayStart" => $"Power Play: {team}",
+            "PowerPlayEnd" => $"PP End: {team}",
+            "GoaliePulled" => $"Goalie Pulled: {team}",
+            "GoalieReturned" => $"Goalie Returned: {team}",
+            "PeriodStart" => $"Period {payload.Period} Start",
+            "PeriodEnd" => $"Period {payload.Period} End",
+            "GameStart" => $"{payload.AwayTeam} @ {payload.HomeTeam}",
+            "GameEnd" => $"Final: {payload.AwayTeam} {payload.AwayScore} - {payload.HomeScore} {payload.HomeTeam}",
+            "OvertimeStart" => "Overtime Start",
+            "ShootoutStart" => "Shootout Start",
+            "TeamWin" => $"{team} Win",
+            "TeamLoss" => $"{team} Loss",
+            _ => payload.EventType
+        };
+    }
+
+    /// <summary>
+    /// Sends a webhook with retry logic and returns status information.
     /// </summary>
     /// <param name="url">The target URL.</param>
     /// <param name="jsonPayload">The JSON payload.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>True if successful.</returns>
-    private async Task<bool> SendWithRetryAsync(string url, string jsonPayload, CancellationToken cancellationToken)
+    /// <returns>Tuple of (success, statusCode, errorMessage).</returns>
+    private async Task<(bool Success, int? StatusCode, string? ErrorMessage)> SendWithRetryAndStatusAsync(
+        string url, string jsonPayload, CancellationToken cancellationToken)
     {
         if (!ValidateUrl(url))
         {
             _logger.LogError("Invalid webhook URL: {Url}", url);
-            return false;
+            return (false, null, "Invalid URL");
         }
 
         using var httpClient = _httpClientFactory.CreateClient();
         httpClient.Timeout = TimeSpan.FromSeconds(TimeoutSeconds);
+
+        int? lastStatusCode = null;
+        string? lastError = null;
 
         for (int attempt = 1; attempt <= MaxRetries; attempt++)
         {
@@ -328,23 +433,27 @@ public class WebhookDispatchService : IWebhookDispatchService
                 using var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
                 var response = await httpClient.PostAsync(url, content, cancellationToken);
 
+                lastStatusCode = (int)response.StatusCode;
+
                 if (response.IsSuccessStatusCode)
                 {
                     _logger.LogDebug("Webhook sent successfully to {Url}", url);
-                    return true;
+                    return (true, lastStatusCode, null);
                 }
 
                 var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+                lastError = $"HTTP {(int)response.StatusCode}: {responseBody}";
                 _logger.LogWarning(
                     "Webhook failed (attempt {Attempt}/{MaxRetries}): {StatusCode} - {Url} - {Response}",
                     attempt, MaxRetries, response.StatusCode, url, responseBody);
             }
             catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                return false;
+                return (false, null, "Cancelled");
             }
             catch (Exception ex)
             {
+                lastError = ex.Message;
                 _logger.LogWarning(ex,
                     "Webhook error (attempt {Attempt}/{MaxRetries}): {Url}",
                     attempt, MaxRetries, url);
@@ -354,7 +463,7 @@ public class WebhookDispatchService : IWebhookDispatchService
             {
                 if (cancellationToken.IsCancellationRequested)
                 {
-                    return false;
+                    return (false, null, "Cancelled");
                 }
 
                 try
@@ -363,13 +472,13 @@ public class WebhookDispatchService : IWebhookDispatchService
                 }
                 catch (OperationCanceledException)
                 {
-                    return false;
+                    return (false, null, "Cancelled");
                 }
             }
         }
 
         _logger.LogError("Webhook failed after {MaxRetries} attempts: {Url}", MaxRetries, url);
-        return false;
+        return (false, lastStatusCode, lastError);
     }
 
     /// <summary>

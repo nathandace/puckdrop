@@ -1,0 +1,185 @@
+@using PuckDrop.Models.Api
+@using PuckDrop.Services
+@implements IDisposable
+
+@if (StartTime > DateTime.UtcNow)
+{
+    <div class="pregame-countdown">
+        <div class="countdown-header">
+            <span class="countdown-label">PUCK DROP IN</span>
+        </div>
+        <div class="countdown-timer">
+            @if (_timeUntilStart.Days > 0)
+            {
+                <div class="countdown-unit">
+                    <span class="countdown-value">@_timeUntilStart.Days</span>
+                    <span class="countdown-suffix">d</span>
+                </div>
+            }
+            <div class="countdown-unit">
+                <span class="countdown-value">@_timeUntilStart.Hours.ToString("D2")</span>
+                <span class="countdown-suffix">h</span>
+            </div>
+            <div class="countdown-unit">
+                <span class="countdown-value">@_timeUntilStart.Minutes.ToString("D2")</span>
+                <span class="countdown-suffix">m</span>
+            </div>
+            <div class="countdown-unit">
+                <span class="countdown-value">@_timeUntilStart.Seconds.ToString("D2")</span>
+                <span class="countdown-suffix">s</span>
+            </div>
+        </div>
+
+        <div class="pregame-info">
+            <div class="game-time-local">
+                <span class="time-icon">&#128337;</span>
+                <span>@StartTime.ToLocalTime().ToString("dddd, MMMM d") at @StartTime.ToLocalTime().ToString("h:mm tt")</span>
+            </div>
+            @if (!string.IsNullOrEmpty(Venue))
+            {
+                <div class="venue-info">
+                    <span class="venue-icon">&#127919;</span>
+                    <span>@Venue</span>
+                </div>
+            }
+        </div>
+
+        @if (AwayTeamRecord != null && HomeTeamRecord != null)
+        {
+            <div class="team-records-preview">
+                <div class="team-record-item away">
+                    <img src="@TeamLogoHelper.GetLogoUrl(AwayTeamAbbrev)" alt="@AwayTeamAbbrev" class="team-logo-sm" />
+                    <div class="record-details">
+                        <span class="team-abbrev">@AwayTeamAbbrev</span>
+                        <span class="record-text">@AwayTeamRecord</span>
+                        @if (!string.IsNullOrEmpty(AwayTeamStreak))
+                        {
+                            <span class="streak @GetStreakClass(AwayTeamStreak)">@AwayTeamStreak</span>
+                        }
+                    </div>
+                </div>
+                <div class="vs-text">VS</div>
+                <div class="team-record-item home">
+                    <img src="@TeamLogoHelper.GetLogoUrl(HomeTeamAbbrev)" alt="@HomeTeamAbbrev" class="team-logo-sm" />
+                    <div class="record-details">
+                        <span class="team-abbrev">@HomeTeamAbbrev</span>
+                        <span class="record-text">@HomeTeamRecord</span>
+                        @if (!string.IsNullOrEmpty(HomeTeamStreak))
+                        {
+                            <span class="streak @GetStreakClass(HomeTeamStreak)">@HomeTeamStreak</span>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (SeasonSeries != null && SeasonSeries.Any())
+        {
+            <div class="season-series">
+                <div class="section-header">
+                    <h4>Season Series</h4>
+                </div>
+                <div class="series-record">
+                    <span class="away-wins">@AwayTeamAbbrev: @SeasonSeries.Count(g => g.AwayWon)</span>
+                    <span class="series-divider">-</span>
+                    <span class="home-wins">@HomeTeamAbbrev: @SeasonSeries.Count(g => !g.AwayWon)</span>
+                </div>
+                <div class="series-games">
+                    @foreach (var game in SeasonSeries.OrderByDescending(g => g.Date).Take(5))
+                    {
+                        <div class="series-game">
+                            <span class="series-date">@game.Date.ToString("MMM d")</span>
+                            <span class="series-score @(game.AwayWon ? "away-won" : "home-won")">
+                                @game.AwayTeamAbbrev @game.AwayScore - @game.HomeScore @game.HomeTeamAbbrev
+                            </span>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (_isStartingSoon)
+        {
+            <div class="starting-soon-alert">
+                <span class="pulse-dot"></span>
+                <span>Game starting soon!</span>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter]
+    public DateTime StartTime { get; set; }
+
+    [Parameter]
+    public string? AwayTeamAbbrev { get; set; }
+
+    [Parameter]
+    public string? HomeTeamAbbrev { get; set; }
+
+    [Parameter]
+    public string? AwayTeamRecord { get; set; }
+
+    [Parameter]
+    public string? HomeTeamRecord { get; set; }
+
+    [Parameter]
+    public string? AwayTeamStreak { get; set; }
+
+    [Parameter]
+    public string? HomeTeamStreak { get; set; }
+
+    [Parameter]
+    public string? Venue { get; set; }
+
+    [Parameter]
+    public List<SeasonSeriesGame>? SeasonSeries { get; set; }
+
+    private Timer? _timer;
+    private TimeSpan _timeUntilStart;
+    private bool _isStartingSoon;
+
+    protected override void OnInitialized()
+    {
+        UpdateCountdown();
+        _timer = new Timer(OnTimerTick, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+    }
+
+    private void OnTimerTick(object? state)
+    {
+        UpdateCountdown();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void UpdateCountdown()
+    {
+        _timeUntilStart = StartTime - DateTime.UtcNow;
+        if (_timeUntilStart < TimeSpan.Zero)
+        {
+            _timeUntilStart = TimeSpan.Zero;
+        }
+        _isStartingSoon = _timeUntilStart.TotalMinutes <= 30 && _timeUntilStart.TotalMinutes > 0;
+    }
+
+    private static string GetStreakClass(string? streak)
+    {
+        if (string.IsNullOrEmpty(streak)) return "";
+        return streak.StartsWith("W") ? "streak-win" : streak.StartsWith("L") ? "streak-loss" : "";
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+    }
+
+    public class SeasonSeriesGame
+    {
+        public DateTime Date { get; set; }
+        public string AwayTeamAbbrev { get; set; } = "";
+        public string HomeTeamAbbrev { get; set; } = "";
+        public int AwayScore { get; set; }
+        public int HomeScore { get; set; }
+        public bool AwayWon => AwayScore > HomeScore;
+    }
+}
