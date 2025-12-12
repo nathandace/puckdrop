@@ -204,6 +204,7 @@ public class GamePollingBackgroundService : BackgroundService
 
     /// <summary>
     /// Checks for live games for all teams that have enabled webhook rules.
+    /// Uses the scoreboard API which is not cached to get real-time game states.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     private async Task CheckWebhookTeamsLiveGamesAsync(CancellationToken cancellationToken)
@@ -220,34 +221,51 @@ public class GamePollingBackgroundService : BackgroundService
             return;
         }
 
-        var season = nhlApiClient.GetCurrentSeason();
-        var teamsToRemove = new List<string>(_webhookTeamLiveGames.Keys);
+        // Use scoreboard API for real-time game states (not cached like schedule)
+        // Invalidate scoreboard cache to ensure fresh data
+        nhlApiClient.InvalidateScoreboardCache();
+        var scoreboard = await nhlApiClient.GetScoreboardAsync(cancellationToken);
 
-        foreach (var teamAbbrev in teamsWithWebhooks)
+        if (scoreboard?.Games == null || scoreboard.Games.Count == 0)
         {
-            try
+            _webhookTeamLiveGames.Clear();
+            return;
+        }
+
+        var teamsToRemove = new List<string>(_webhookTeamLiveGames.Keys);
+        var teamsWithWebhooksSet = new HashSet<string>(teamsWithWebhooks);
+
+        // Check all games in the scoreboard for live games involving webhook teams
+        foreach (var game in scoreboard.Games)
+        {
+            if (game.GameState is not ("LIVE" or "CRIT")) continue;
+
+            // Check if home or away team has webhooks enabled
+            var homeAbbrev = game.HomeTeam?.Abbrev;
+            var awayAbbrev = game.AwayTeam?.Abbrev;
+
+            if (homeAbbrev != null && teamsWithWebhooksSet.Contains(homeAbbrev))
             {
-                var schedule = await nhlApiClient.GetSeasonScheduleAsync(teamAbbrev, season, cancellationToken);
-
-                var liveGame = schedule?.Games?.FirstOrDefault(g =>
-                    g.GameState == "LIVE" || g.GameState == "CRIT");
-
-                if (liveGame != null)
+                teamsToRemove.Remove(homeAbbrev);
+                if (!_webhookTeamLiveGames.TryGetValue(homeAbbrev, out var existingGameId) || existingGameId != game.Id)
                 {
-                    teamsToRemove.Remove(teamAbbrev);
-
-                    if (!_webhookTeamLiveGames.TryGetValue(teamAbbrev, out var existingGameId) || existingGameId != liveGame.Id)
-                    {
-                        _logger.LogInformation(
-                            "Team {Team} has live game {GameId} - starting webhook polling",
-                            teamAbbrev, liveGame.Id);
-                        _webhookTeamLiveGames[teamAbbrev] = liveGame.Id;
-                    }
+                    _logger.LogInformation(
+                        "Team {Team} has live game {GameId} - starting webhook polling",
+                        homeAbbrev, game.Id);
+                    _webhookTeamLiveGames[homeAbbrev] = game.Id;
                 }
             }
-            catch (Exception ex)
+
+            if (awayAbbrev != null && teamsWithWebhooksSet.Contains(awayAbbrev))
             {
-                _logger.LogWarning(ex, "Failed to check live games for team {Team}", teamAbbrev);
+                teamsToRemove.Remove(awayAbbrev);
+                if (!_webhookTeamLiveGames.TryGetValue(awayAbbrev, out var existingGameId) || existingGameId != game.Id)
+                {
+                    _logger.LogInformation(
+                        "Team {Team} has live game {GameId} - starting webhook polling",
+                        awayAbbrev, game.Id);
+                    _webhookTeamLiveGames[awayAbbrev] = game.Id;
+                }
             }
         }
 

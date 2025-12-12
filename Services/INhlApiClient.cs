@@ -90,6 +90,11 @@ public interface INhlApiClient
     void InvalidateScheduleCache(string teamAbbrev);
 
     /// <summary>
+    /// Invalidates cached scoreboard data.
+    /// </summary>
+    void InvalidateScoreboardCache();
+
+    /// <summary>
     /// Gets today's scoreboard with all games and scores.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>

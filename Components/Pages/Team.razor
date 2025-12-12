@@ -561,19 +561,50 @@
             var statsTask = NhlApiClient.GetClubStatsAsync(TeamAbbrev);
             var scheduleTask = NhlApiClient.GetSeasonScheduleAsync(TeamAbbrev, season);
             var standingsTask = NhlApiClient.GetStandingsAsync();
+            // Use scoreboard for real-time game state detection (schedule is cached too long)
+            NhlApiClient.InvalidateScoreboardCache();
+            var scoreboardTask = NhlApiClient.GetScoreboardAsync();
 
-            await Task.WhenAll(statsTask, scheduleTask, standingsTask);
+            await Task.WhenAll(statsTask, scheduleTask, standingsTask, scoreboardTask);
 
             _clubStats = statsTask.Result;
             _schedule = scheduleTask.Result;
             _standings = standingsTask.Result;
             _standing = _standings?.Standings.FirstOrDefault(s => s.TeamAbbrev.Default == TeamAbbrev);
 
-            // Find next upcoming game
-            _nextGame = _schedule?.Games?
-                .Where(g => g.GameState is "FUT" or "PRE" or "LIVE" or "CRIT")
-                .OrderBy(g => g.StartTimeUtc)
-                .FirstOrDefault();
+            var scoreboard = scoreboardTask.Result;
+
+            // Check scoreboard first for live games (more accurate than cached schedule)
+            _nextGame = null;
+            if (scoreboard?.Games != null)
+            {
+                var liveGame = scoreboard.Games.FirstOrDefault(g =>
+                    g.GameState is "LIVE" or "CRIT" &&
+                    (g.HomeTeam?.Abbrev == TeamAbbrev || g.AwayTeam?.Abbrev == TeamAbbrev));
+
+                if (liveGame != null)
+                {
+                    // Convert scoreboard game to schedule game format
+                    _nextGame = new ScheduleGame
+                    {
+                        Id = liveGame.Id,
+                        GameState = liveGame.GameState,
+                        StartTimeUtc = liveGame.StartTimeUtc,
+                        HomeTeam = new ScheduleTeam { Abbrev = liveGame.HomeTeam?.Abbrev ?? "", Score = liveGame.HomeTeam?.Score },
+                        AwayTeam = new ScheduleTeam { Abbrev = liveGame.AwayTeam?.Abbrev ?? "", Score = liveGame.AwayTeam?.Score },
+                        Venue = liveGame.Venue
+                    };
+                }
+            }
+
+            // Fall back to schedule for upcoming games if no live game found
+            if (_nextGame == null)
+            {
+                _nextGame = _schedule?.Games?
+                    .Where(g => g.GameState is "FUT" or "PRE")
+                    .OrderBy(g => g.StartTimeUtc)
+                    .FirstOrDefault();
+            }
 
             // Load pre-game data if there's an upcoming game
             if (_nextGame != null && _nextGame.GameState is "FUT" or "PRE")

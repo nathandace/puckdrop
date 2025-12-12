@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace PuckDrop.Models.Api;
 
 /// <summary>
-/// Response from the NHL scoreboard endpoint.
+/// Response from the NHL scoreboard endpoint (/v1/score/now).
 /// </summary>
 public class ScoreboardResponse
 {

@@ -165,6 +165,12 @@ public class NhlApiClient : INhlApiClient
     }
 
     /// <inheritdoc />
+    public void InvalidateScoreboardCache()
+    {
+        _cache.Remove("scoreboard_now");
+    }
+
+    /// <inheritdoc />
     public async Task<ScoreboardResponse?> GetScoreboardAsync(CancellationToken cancellationToken = default)
     {
         var cacheKey = "scoreboard_now";
