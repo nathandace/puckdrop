@@ -69,6 +69,8 @@ public class WebhookRuleService : IWebhookRuleService
         existing.PayloadFormat = rule.PayloadFormat;
         existing.IsEnabled = rule.IsEnabled;
         existing.Name = rule.Name;
+        existing.DelaySeconds = rule.DelaySeconds;
+        existing.CustomPayloadTemplate = rule.CustomPayloadTemplate;
         existing.UpdatedAt = DateTime.UtcNow;
 
         await context.SaveChangesAsync(cancellationToken);
